@@ -257,7 +257,7 @@ echo.
 echo [Step 6/7] Initializing Database and Seeding Pre-Configured Voice Agents...
 cd /d "%BASE_DIR%\backend"
 call ".\.venv\Scripts\activate.bat"
-python -c "import asyncio; from app.database import init_db; from app.database_migrations import run_async_migrations; from app.services.seed_service import seed_initial_data_if_needed; async def setup(): await init_db(); await run_async_migrations(); await seed_initial_data_if_needed(); asyncio.run(setup())" >nul 2>&1
+python -c "import asyncio; from app.database import init_db; from app.database_migrations import run_async_migrations; from app.services.seed_service import seed_initial_data_if_needed; (lambda: [asyncio.run(init_db()), asyncio.run(run_async_migrations()), asyncio.run(seed_initial_data_if_needed())])()" >nul 2>&1
 echo  - SQLite database ready at data\database\calling_agent.db
 echo  - Default Voice Agents seeded: Admission Counselor, Real Estate Advisor, Tech Support.
 echo.

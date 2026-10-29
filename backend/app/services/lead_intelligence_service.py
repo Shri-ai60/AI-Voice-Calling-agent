@@ -502,12 +502,12 @@ Return ONLY a valid JSON object with these exact keys:
                     diag.classification in (IntentClassification.INTERESTED, IntentClassification.NEEDS_INFORMATION)
                     or diag.binary_classification == "INTERESTED"
                 )
+                confidence = float(diag.confidence)
                 # First-question YES policy or Duration Policy (>1 min)
                 if first_q_yes or duration_interested:
                     is_interested = True
                     diag.opt_out_detected = False
                     confidence = max(confidence, 0.95 if first_q_yes else 0.92)
-                confidence = float(diag.confidence)
 
                 # Determine disposition and handle opt-out suppression
                 if diag.opt_out_detected:

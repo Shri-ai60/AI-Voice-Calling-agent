@@ -148,6 +148,29 @@ async def vobiz_hangup_webhook(call_id: str, request: Request):
             data = {}
 
     logger.info(f"[VoBiz Direct] Received hangup callback for Call ID: {call_id}, data: {data}")
+    call_status = (data.get("CallStatus") or "").lower()
+    hangup_cause = data.get("HangupCause") or data.get("HangupCauseName") or ""
+    try:
+        from app.database import AsyncSessionLocal
+        from app.models.call import Call
+        from datetime import datetime, timezone
+        async with AsyncSessionLocal() as session:
+            call = await session.get(Call, call_id)
+            if call:
+                if call_status in ("busy", "failed", "no-answer", "rejected") or "busy" in hangup_cause.lower():
+                    call.status = "busy" if ("busy" in hangup_cause.lower() or call_status == "busy") else "failed"
+                    call.disposition = call.status
+                elif call.status in ("initiating", "ringing"):
+                    call.status = "no_answer"
+                    call.disposition = "no_answer"
+                elif call.status != "completed":
+                    call.status = "completed"
+                call.termination_reason = hangup_cause or call_status
+                call.ended_at = datetime.now(timezone.utc)
+                await session.commit()
+    except Exception as e:
+        logger.warning(f"[VoBiz Direct] Could not update call status on hangup: {e}")
+
     await _save_vobiz_recording_url(call_id, data)
     return {"status": "ok", "call_id": call_id}
 

@@ -47,6 +47,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization warning: {e}")
 
+    import platform
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            ctypes.windll.winmm.timeBeginPeriod(1)
+            logger.info("Windows high-resolution multimedia timer (1ms) enabled.")
+        except Exception as e:
+            logger.warning(f"Could not enable Windows multimedia timer: {e}")
+
     logger.info("Backend service initialized.")
 
     # Automatic follow-up dispatcher: places customer-requested callback

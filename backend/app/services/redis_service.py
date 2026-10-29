@@ -11,21 +11,31 @@ logger = logging.getLogger(__name__)
 class RedisService:
     def __init__(self):
         self._redis: Optional[aioredis.Redis] = None
+        self._last_fail_time: float = 0.0
 
     async def get_client(self) -> Optional[aioredis.Redis]:
-        if self._redis is None:
-            try:
-                self._redis = aioredis.from_url(
-                    settings.REDIS_URL,
-                    decode_responses=True,
-                    socket_connect_timeout=2.0,
-                    socket_timeout=2.0,
-                )
-                await self._redis.ping()
-            except Exception as e:
-                logger.warning(f"Could not connect to Redis: {e}")
-                self._redis = None
-        return self._redis
+        if self._redis is not None:
+            return self._redis
+
+        import time
+        now = time.time()
+        if (now - self._last_fail_time) < 30.0:
+            return None
+
+        try:
+            self._redis = aioredis.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=0.3,
+                socket_timeout=0.3,
+            )
+            await self._redis.ping()
+            return self._redis
+        except Exception as e:
+            logger.debug(f"Redis is offline/unreachable ({e}); falling back to local storage.")
+            self._redis = None
+            self._last_fail_time = now
+            return None
 
     # -------------------------------------------------------------
     # 1. Active Call State Cache
