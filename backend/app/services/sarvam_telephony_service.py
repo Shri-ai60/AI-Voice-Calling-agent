@@ -201,7 +201,7 @@ class SarvamTelephonyService:
 
         xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Stream bidirectional="true" contentType="audio/x-mulaw;rate=8000">{stream_url}</Stream>
+    <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">{stream_url}</Stream>
 </Response>"""
         return xml
 
