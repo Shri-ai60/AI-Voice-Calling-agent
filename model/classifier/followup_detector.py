@@ -289,7 +289,7 @@ class FollowupDetector:
         # Category 13: Client requests tomorrow / next day
         # e.g. "kal call karna", "kal phone karna", "call me tomorrow", "udya phone kara", "उद्या फोन करा"
         self.p_cat13 = re.compile(
-            r"(\b(kal\s*(call|phone|baat|batao|karna|karo)|call\s*me\s*tomorrow|tomorrow\s*(call|morning|evening)?|udya\s*(phone|call|kara))\b|"
+            r"(\b((?:no\s*,?\s*)?call\s*me\s*tomorrow|please\s*call\s*me\s*tomorrow|kal\s*(call|phone|baat|batao|karna|karo)|tomorrow\s*(call|morning|evening)?|udya\s*(phone|call|kara))\b|"
             r"(कल\s*(कॉल|फोन|बात|सुबह|शाम|करना|करो|कर\s*सकते|आना)|उद्या\s*(फोन|कॉल|बोलूया|करा|सकाळी)))",
             re.IGNORECASE
         )
@@ -298,8 +298,9 @@ class FollowupDetector:
         # e.g. "10 minute baad", "aadhe ghante baad", "half an hour", "thodi der baad call karo", "अर्ध्या तासाने फोन करा"
         self.p_cat14 = re.compile(
             r"(\b((\d{1,2}|ten|fifteen|twenty|thirty|dus|pandrah|bees|tees)\s*(min|minute|mins?)\s*(baad|mein|after)|"
+            r"need\s*(?:some\s*)?time\s*to\s*(?:decide|think|discuss)|discuss\s*(?:it\s*)?with\s*(?:my\s*)?family|i\s*need\s*(?:some\s*)?time|"
             r"aadhe\s*ghante|half\s*an\s*hour|thodi\s*der\s*(baad|me)|kuch\s*der\s*baad|thoda\s*time\s*do|give\s*me\s*(some\s*)?time)\b|"
-            r"(थोड्या\s*वेळाने|अर्ध्या\s*तासाने|काही\s*वेळानंतर))",
+            r"(सोचने\s*(?:के\s*लिए|का)?\s*समय|विचार\s*करून\s*सांगतो|घरच्यांशी\s*बोलून|थोड्या\s*वेळाने|अर्ध्या\s*तासाने|काही\s*वेळानंतर))",
             re.IGNORECASE
         )
 
@@ -379,8 +380,8 @@ class FollowupDetector:
         # Category 1: Client not available / busy
         # e.g. "busy hoon", "not available", "occupied", "not free", "time nahi hai", "कामात आहे", "व्यस्त आहे"
         self.p_cat1 = re.compile(
-            r"(\b(busy\s*(hoon|hu|hai|ahe|aahe)|not\s*available|i\'?m\s*occupied|i\'?m\s*busy|not\s*free|time\s*nahi\s*hai|vel\s*nahi)\b|"
-            r"(उपलब्ध\s*नाही|व्यस्त\s*आहे|कामात\s*आहे|वेळ\s*नाही))",
+            r"(\b(i\s*am\s*busy|i\'?m\s*busy|busy\s*right\s*now|busy\s*(hoon|hu|hai|ahe|aahe)|not\s*available|i\'?m\s*occupied|not\s*free|time\s*nahi\s*hai|vel\s*nahi)\b|"
+            r"(उपलब्ध\s*नाही|व्यस्त\s*(?:आहे|हूँ|हु)|कामात\s*आहे|वेळ\s*नाही))",
             re.IGNORECASE
         )
 
@@ -642,8 +643,10 @@ class FollowupDetector:
         except Exception:
             pass
 
+        # Do NOT invent scheduled_at when customer gave no explicit callback moment for Busy or Needs Time
         if not scheduled_iso and delay and cat_info.get("requires_followup"):
-            scheduled_iso = (datetime.now(UTC) + timedelta(minutes=delay)).isoformat()
+            if cat_id not in (1,):  # Category 1 is busy without scheduled time
+                scheduled_iso = (datetime.now(UTC) + timedelta(minutes=delay)).isoformat()
 
         return FollowupDetectionResult(
             category_id=cat_id,

@@ -1,3 +1,4 @@
+import re
 import os
 import sys
 import logging
@@ -41,6 +42,310 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+
+# -------------------------------------------------------------
+# Comprehensive Initial Interest & Follow-up Evaluator
+# -------------------------------------------------------------
+AUDIO_OR_IDENTITY_CHECK_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\bcan\s+you\s+hear\s+me\b",
+        r"\bam\s+i\s+audible\b",
+        r"\bhello\s*,?\s*can\s+you\s+hear\b",
+        r"\bhello\s*\??$",
+        r"\bis\s+this\s+[a-z\s\.\']+\??$",
+        r"\bam\s+i\s+speaking\s+(?:to|with)\b",
+        r"\baawaz\s+aa\s+rahi\s+hai\b",
+        r"\bmeri\s+aawaz\s+aa\s+rahi\s+hai\b",
+        r"\bmajha\s+aawaz\s+yetoy\s+ka\b",
+        r"\baawaz\s+yetoy\s+ka\b",
+        r"आवाज\s+येतोय\s+का",
+        r"आवाज़\s+आ\s+रही\s+है",
+    ]
+]
+
+INTEREST_QUESTION_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\bare\s+you\s+interested\b",
+        r"\binterested\s+in\s+(?:learning|knowing|our|this|hearing)\b",
+        r"\bwould\s+you\s+like\s+to\s+(?:know|hear|learn|explore)\b",
+        r"\bcan\s+i\s+(?:tell\s+you|explain|share)\b",
+        r"\bdo\s+you\s+want\s+to\s+know\b",
+        r"\bwe\s+are\s+providing\b",
+        r"\bwe\s+are\s+offering\b",
+        r"जानकारी\s+चाहते\s+हैं",
+        r"जानकारी\s+लेना\s+चाहते\s+हैं",
+        r"इंटरेस्टेड\s+हैं",
+        r"रुचि\s+रखते\s+हैं",
+        r"एडमिशन\s+के\s+बारे\s+में",
+        r"कोर्स\s+के\s+बारे\s+में",
+        r"फ्लैट\s+देखने\s+में",
+        r"माहिती\s+(?:हवी|पाहिजे)\s+आहे\s+का",
+        r"जाणून\s+घ्यायचे\s+का",
+        r"इच्छुक\s+आहात\s+का",
+        r"बियाणे\s+उपलब्ध",
+        r"मदत\s+करू\s+शकतो",
+    ]
+]
+
+AFFIRMATIVE_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"^\s*(?:yes|yeah|yep|yup|sure|ok|okay|definitely|absolutely|certainly|interested|please\s*do|tell\s*me\s*more|i\s*want\s*to\s*know|i\s*am\s*interested|i\'m\s*interested)[\s\.,!]*$",
+        r"\b(?:yes|yeah|yep|sure|definitely)\s*,?\s*(?:please|tell\s*me\s*more|i\s*am\s*interested|i\s*want\s*to\s*know|i\s*want\s*to\s*purchase)\b",
+        r"\b(?:i\s*am|i\'m)\s*interested\b",
+        r"\btell\s*me\s*more\b",
+        r"\b(?:what\s+are|tell\s+me)\s+(?:your\s+)?prices?\b",
+        r"\bwhat\s+(?:is|are)\s+the\s+(?:price|fees?|charges?|cost)\b",
+        r"\bhow\s+much\s+(?:does\s+it\s+cost|is\s+it)\b",
+        r"\b(?:send|bhejo|patwa)\s+.*whatsapp\b",
+        r"\bwhatsapp\s+.*(?:send|bhejo|details|mahitii)\b",
+        r"^\s*(?:हाँ|हा|हाँजी|जी|हां|हॉं|ज़रूर|जरूर|बताइए|बोलो|बोलिए|बिलकुल|बिल्कुल|ठीक\s*है)[\s\.,!]*$",
+        r"(?:हाँ|हा|जी|हां)\s*,?\s*(?:बताइए|बताओ|जानकारी\s*चाहिए|चाहता\s*हूँ|चाहती\s*हूँ|इंटरेस्टेड\s*हूँ|दीजिए|सुनाइए)",
+        r"जानकारी\s*(?:चाहिए|दीजिए|लेना\s*चाहता)",
+        r"(?:याचे\s+)?दर\s+काय\s+आहेत",
+        r"फीस\s+कितनी\s+है",
+        r"कीमत\s+कितनी\s+है",
+        r"^\s*(?:हो|होय|माहिती\s*पाहिजे|सांगा|नक्कीच|हो\s*सांगा)[\s\.,!]*$",
+        r"हो\s*,?\s*(?:मला\s*)?(?:माहिती\s*पाहिजे|सांगा|आवड\s*आहे|हवी\s*आहे)",
+        r"माहिती\s*(?:पाहिजे|द्या|सांगा)",
+    ]
+]
+
+FOLLOWUP_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\bi\s*am\s*busy(?:\s*right\s*now|\s*now|\s*currently|\s*today)?\b",
+        r"\bi\'?m\s*busy(?:\s*right\s*now|\s*now|\s*currently|\s*today)?\b",
+        r"\bbusy\s*right\s*now\b",
+        r"\b(?:call|phone)\s*(?:me\s*)?(?:tomorrow|later|tonight|next\s*week)\b",
+        r"\bcall\s*me\s*(?:today\s*)?(?:at\s*)?\d+(?::\d+)?\s*(?:am|pm)?\b",
+        r"\bcall\s*me\s*(?:next\s*)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+        r"\bneed\s*(?:some\s*)?time\s*to\s*(?:decide|think|discuss)\b",
+        r"\bi\s*need\s*(?:some\s*)?time\b",
+        r"\bdiscuss\s*(?:it\s*)?with\s*(?:my\s*)?family\b",
+        r"\b(?:no\s*,?\s*)?call\s*me\s*tomorrow\b",
+        r"\bplease\s*call\s*me\s*tomorrow\b",
+        r"\bcurrently\s*travelling\b",
+        r"व्यस्त\s*(?:हूँ|हु|है)",
+        r"अभी\s*व्यस्त",
+        r"टाइम\s*नहीं\s*है",
+        r"फुर्सत\s*नहीं\s*है",
+        r"बाद\s*में\s*(?:फोन|कॉल|बात)",
+        r"कल\s*(?:सुबह\s*)?(?:फोन|कॉल|बात)",
+        r"सोचने\s*(?:के\s*लिए|का)?\s*समय",
+        r"व्यस्त\s*आहे",
+        r"वेळ\s*नाही",
+        r"नंतर\s*(?:फोन|कॉल|बोलू|सांगा)",
+        r"उद्या\s*(?:फोन|कॉल|बोलूया|करा)",
+        r"विचार\s*करून\s*सांगतो",
+        r"घरच्यांशी\s*बोलून",
+    ]
+]
+
+REJECTION_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\b(?:no|nope)\s*,?\s*(?:not\s*interested|i\s*am\s*not\s*interested|don\'?t\s*want)\b",
+        r"^\s*(?:no|nope|not\s*interested)[\s\.,!]*$",
+        r"\bnot\s*interested\b",
+        r"\bdon\'?t\s*call\s*(?:me\s*)?again\b",
+        r"\bdo\s*not\s*call\b",
+        r"\bstop\s*calling\b",
+        r"\bremove\s*(?:my\s*)?number\b",
+        r"नहीं\s*,?\s*(?:नहीं\s*चाहिए|रुचि\s*नहीं|इंटरेस्ट\s*नहीं|नॉट\s*इंटरेस्टेड)",
+        r"^\s*(?:नहीं|नही|ना)[\s\.,!]*$",
+        r"नहीं\s*चाहिए",
+        r"दोबारा\s*फोन\s*मत\s*(?:करना|कीजिए)",
+        r"^\s*(?:नाही|नको)[\s\.,!]*$",
+        r"नाही\s*,?\s*(?:नको|माहिती\s*नको|रुची\s*नाही)",
+        r"नको\s*आहे",
+        r"पुन्हा\s*फोन\s*करू\s*नका",
+    ]
+]
+
+OPT_OUT_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\bdon\'?t\s*call\s*(?:me\s*)?again\b",
+        r"\bdo\s*not\s*call\b",
+        r"\bstop\s*calling\b",
+        r"\bnever\s*call\b",
+        r"\bremove\s*(?:my\s*)?number\b",
+        r"दोबारा\s*फोन\s*मत\s*(?:करना|कीजिए)",
+        r"फोन\s*मत\s*करो",
+        r"पुन्हा\s*फोन\s*करू\s*नका",
+    ]
+]
+
+AUDIO_CHECK_RESPONSE_PATTERNS = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\b(?:yes\s*,?\s*)?(?:i\s*can\s*hear\s*you|can\s*hear\s*you|you\s*are\s*audible)\b",
+        r"\b(?:हाँ|हा)\s*,?\s*(?:आवाज\s*आ\s*रही\s*है|सुनाई\s*दे\s*रहा\s*है)\b",
+        r"\b(?:हो)\s*,?\s*(?:आवाज\s*येतोय|ऐकू\s*येतंय)\b",
+    ]
+]
+
+
+def extract_turns_from_data(segments: Optional[List[Any]] = None, transcript_text: str = "") -> List[Dict[str, str]]:
+    turns = []
+    if segments:
+        sorted_segs = sorted(segments, key=lambda s: s.get("sequence", 0) if isinstance(s, dict) else (getattr(s, "sequence", 0) or 0))
+        for seg in sorted_segs:
+            spk = seg.get("speaker", "") if isinstance(seg, dict) else getattr(seg, "speaker", "")
+            txt = seg.get("text", "") if isinstance(seg, dict) else getattr(seg, "text", "")
+            role = "agent" if spk in ("agent", "bot", "assistant") else "customer"
+            if txt and txt.strip():
+                turns.append({"role": role, "text": txt.strip()})
+    elif transcript_text:
+        for line in transcript_text.splitlines():
+            line_s = line.strip()
+            if not line_s:
+                continue
+            if line_s.lower().startswith(("agent:", "assistant:", "bot:")):
+                parts = line_s.split(":", 1)
+                turns.append({"role": "agent", "text": parts[1].strip()})
+            elif line_s.lower().startswith(("customer:", "user:", "caller:", "client:")):
+                parts = line_s.split(":", 1)
+                turns.append({"role": "customer", "text": parts[1].strip()})
+    return turns
+
+
+def evaluate_initial_interest(turns: List[Dict[str, str]]) -> Dict[str, Any]:
+    interest_agent_turn = None
+    customer_answer_turn = None
+
+    for i, t in enumerate(turns):
+        role = t.get("role", "").lower()
+        txt = t.get("text", "").strip()
+        if not txt:
+            continue
+
+        if role == "agent" and not interest_agent_turn:
+            is_audio_check = any(p.search(txt) for p in AUDIO_OR_IDENTITY_CHECK_PATTERNS)
+            is_pitch = any(p.search(txt) for p in INTEREST_QUESTION_PATTERNS)
+            if is_pitch:
+                interest_agent_turn = txt
+                for j in range(i + 1, len(turns)):
+                    if turns[j].get("role", "").lower() in ("customer", "user", "caller"):
+                        customer_answer_turn = turns[j].get("text", "").strip()
+                        break
+                break
+            elif not is_audio_check and len(txt) > 20:
+                interest_agent_turn = txt
+                for j in range(i + 1, len(turns)):
+                    if turns[j].get("role", "").lower() in ("customer", "user", "caller"):
+                        customer_answer_turn = turns[j].get("text", "").strip()
+                        break
+                break
+
+    if not interest_agent_turn:
+        for t in turns:
+            if t.get("role", "").lower() == "agent" and not interest_agent_turn:
+                interest_agent_turn = t.get("text", "").strip()
+            elif t.get("role", "").lower() in ("customer", "user", "caller") and not customer_answer_turn:
+                customer_answer_turn = t.get("text", "").strip()
+
+    if not customer_answer_turn:
+        return {
+            "classification": "UNCERTAIN",
+            "is_interested": False,
+            "is_followup": False,
+            "is_rejected": False,
+            "is_opt_out": False,
+            "reason": "No customer response found.",
+            "evidence": "",
+        }
+
+    c_text = customer_answer_turn.strip()
+
+    # Audio check guard
+    if interest_agent_turn and any(p.search(interest_agent_turn) for p in AUDIO_OR_IDENTITY_CHECK_PATTERNS):
+        if any(p.search(c_text) for p in AUDIO_CHECK_RESPONSE_PATTERNS) or c_text.lower() in ("yes", "yeah", "हाँ", "हा", "हो"):
+            return {
+                "classification": "UNCERTAIN",
+                "is_interested": False,
+                "is_followup": False,
+                "is_rejected": False,
+                "is_opt_out": False,
+                "reason": "Customer answered audio/identity check; not an interest response.",
+                "evidence": c_text,
+            }
+
+    # Opt-out check
+    is_opt_out = any(p.search(c_text) for p in OPT_OUT_PATTERNS)
+    if is_opt_out:
+        return {
+            "classification": "NOT_INTERESTED",
+            "is_interested": False,
+            "is_followup": False,
+            "is_rejected": True,
+            "is_opt_out": True,
+            "reason": "Customer explicitly requested not to be called again (opt-out / DNC).",
+            "evidence": c_text,
+        }
+
+    is_followup = any(p.search(c_text) for p in FOLLOWUP_PATTERNS)
+    is_aff = any(p.search(c_text) for p in AFFIRMATIVE_PATTERNS)
+    is_rej = any(p.search(c_text) for p in REJECTION_PATTERNS)
+
+    # Scenario 15: "I am interested, but call me tomorrow" -> Both INTERESTED and FOLLOW_UP!
+    if is_aff and is_followup:
+        return {
+            "classification": "INTERESTED",
+            "is_interested": True,
+            "is_followup": True,
+            "is_rejected": False,
+            "is_opt_out": False,
+            "reason": "Customer expressed interest and requested a follow-up callback.",
+            "evidence": c_text,
+        }
+
+    if is_aff and not is_rej:
+        return {
+            "classification": "INTERESTED",
+            "is_interested": True,
+            "is_followup": False,
+            "is_rejected": False,
+            "is_opt_out": False,
+            "reason": "Customer responded positively to initial interest question.",
+            "evidence": c_text,
+        }
+
+    if is_followup:
+        reason = "Customer requested callback."
+        c_low = c_text.lower()
+        if "busy" in c_low or "व्यस्त" in c_text or "time nahi" in c_low or "वेळ नाही" in c_text:
+            reason = "Customer is busy. (Action: Schedule callback)"
+        elif "think" in c_low or "decide" in c_low or "family" in c_low or "सोचने" in c_text or "विचार" in c_text:
+            reason = "Customer needs time to decide. (Action: Schedule callback)"
+
+        return {
+            "classification": "FOLLOW_UP",
+            "is_interested": False,
+            "is_followup": True,
+            "is_rejected": False,
+            "is_opt_out": False,
+            "reason": reason,
+            "evidence": c_text,
+        }
+
+    if is_rej:
+        return {
+            "classification": "NOT_INTERESTED",
+            "is_interested": False,
+            "is_followup": False,
+            "is_rejected": True,
+            "is_opt_out": False,
+            "reason": "Customer declined initial interest question.",
+            "evidence": c_text,
+        }
+
+    return {
+        "classification": "UNCERTAIN",
+        "is_interested": False,
+        "is_followup": False,
+        "is_rejected": False,
+        "is_opt_out": False,
+        "reason": "Customer response was ambiguous or unclear.",
+        "evidence": c_text,
+    }
+
 class LeadIntelligenceService:
     """
     Lead Interest Intelligence Service powered by Google Gemini LLM
@@ -57,59 +362,20 @@ class LeadIntelligenceService:
         else:
             self.classifier = None
 
-    @staticmethod
-    def detect_first_question_yes(segments: Optional[List[Any]] = None, transcript_text: str = "") -> bool:
+    @classmethod
+    def evaluate_initial_interest(cls, turns: List[Dict[str, str]]) -> Dict[str, Any]:
+        """Context-aware initial interest question evaluation."""
+        return evaluate_initial_interest(turns)
+
+    @classmethod
+    def detect_first_question_yes(cls, segments: Optional[List[Any]] = None, transcript_text: str = "") -> bool:
         """
-        Determines if the customer answered 'YES' / affirmative to the agent's opening question.
-        Client Policy: If customer says YES to the first question, they are marked as an INTERESTED lead
-        even if further in the conversation they say no or the call disconnects.
+        Determines if the customer answered 'YES' / affirmative to the agent's opening interest question.
+        Uses conversational context rather than simple word matches.
         """
-        first_customer_text = ""
-        if segments:
-            sorted_segs = sorted(segments, key=lambda s: s.get("sequence", 0) if isinstance(s, dict) else (getattr(s, "sequence", 0) or 0))
-            for seg in sorted_segs:
-                spk = seg.get("speaker", "") if isinstance(seg, dict) else getattr(seg, "speaker", "")
-                txt = seg.get("text", "") if isinstance(seg, dict) else getattr(seg, "text", "")
-                if spk in ("customer", "user", "caller") and txt and txt.strip():
-                    first_customer_text = txt.strip()
-                    break
-
-        if not first_customer_text and transcript_text:
-            for line in transcript_text.splitlines():
-                if line.startswith("Customer:"):
-                    first_customer_text = line.replace("Customer:", "").strip()
-                    break
-
-        if not first_customer_text:
-            return False
-
-        t = first_customer_text.lower().strip()
-
-        # Immediate refusal words
-        neg_words = [w.strip("।,?!.") for w in t.split()]
-        if any(w in ["नहीं", "नही", "ना", "no", "nahi", "nahin", "nope", "not", "nako", "नाही", "नको"] for w in neg_words[:2]):
-            return False
-
-        if any(neg in t for neg in [
-            "not interested", "nahi chahiye", "nahi lena", "नहीं चाहिए", "नहीं लेना",
-            "काट दो", "कट करो", "फोन रखो", "रखो फोन", "mat karo", "don't call"
-        ]):
-            return False
-
-        # Positive interest confirmation signals
-        pos_keywords = [
-            "हाँ", "हा", "हाँजी", "जी", "हां", "हॉं", "यस", "yes", "sure", "bataiye", "batao",
-            "bolo", "boliye", "interested", "sahi hai", "theek hai", "ha", "han", "haan",
-            "okay", "ok", "bilkul", "बिल्कुल", "बताइए", "बोलो", "बोलिए", "ज़रूर", "जरूर",
-            "सांगा", "हो", "आहे", "kahiye", "bol raha", "bataye", "ji haan", "ji ha"
-        ]
-        if any(pos in t for pos in pos_keywords):
-            return True
-
-        if any(w in ["yes", "ha", "haan", "han", "ji", "ok", "okay", "sure"] for w in neg_words):
-            return True
-
-        return False
+        turns = extract_turns_from_data(segments, transcript_text)
+        res = evaluate_initial_interest(turns)
+        return bool(res.get("is_interested", False))
 
     def build_transcript_text(self, call: Call, segments: Optional[List[Any]] = None) -> str:
         """
@@ -309,8 +575,6 @@ Return ONLY a valid JSON object with these exact keys:
         # Business policy (client rule): If customer says YES to the first question,
         # they are added to the INTERESTED leads pipeline even if further in the conversation they say no.
         first_q_yes = self.detect_first_question_yes(segments=segments, transcript_text=transcript_text)
-        if not first_q_yes and bool(offline.get("first_question_yes")):
-            first_q_yes = True
 
         # Duration Policy: If customer speaks / engages for more than 1 minute (>60s),
         # they are classified as an INTERESTED lead per business rule.
@@ -650,12 +914,28 @@ Return ONLY a valid JSON object with these exact keys:
             "created_at": datetime.now(UTC).isoformat(),
         }
 
-    async def analyze_followup(self, session: AsyncSession, call: Call) -> Dict[str, Any]:
+    async def analyze_followup(self, session: AsyncSession, call: Call, segments: Optional[List[Any]] = None) -> Dict[str, Any]:
         """
         Evaluates the transcript using the 25-category Follow-Up Detection Engine.
         If a follow-up condition is detected, optionally records or updates the Followup table.
         """
-        transcript_text = self.build_transcript_text(call)
+        if not segments:
+            try:
+                seg_stmt = (
+                    select(TranscriptSegment)
+                    .join(Transcript)
+                    .where(Transcript.call_id == call.id)
+                    .order_by(TranscriptSegment.sequence.asc())
+                )
+                seg_res = await session.execute(seg_stmt)
+                segments = seg_res.scalars().all()
+            except Exception as e:
+                logger.warning(f"Could not load segments explicitly in analyze_followup: {e}")
+
+        transcript_text = self.build_transcript_text(call, segments=segments)
+        turns = extract_turns_from_data(segments, transcript_text)
+        init_res = self.evaluate_initial_interest(turns)
+
         if not followup_detector:
             return {
                 "call_id": call.id,
@@ -667,42 +947,43 @@ Return ONLY a valid JSON object with these exact keys:
 
         res: FollowupDetectionResult = followup_detector.detect_followup_detailed(transcript_text)
         scheduled_dt = None
-        if res.suggested_scheduled_at:
-            try:
-                scheduled_dt = datetime.fromisoformat(res.suggested_scheduled_at.replace("Z", "+00:00"))
-            except Exception:
-                pass
 
-        # Automatic rescheduling from the customer's own words (offline):
-        # if they named a time ("tomorrow at 5 pm", "kal shaam 6 baje",
-        # "2 ghante baad"), that exact moment wins over the category's
-        # fixed delay; every auto-scheduled time is then moved inside
-        # working hours (09:00-19:00 IST) - after-hours requests roll to
-        # 09:00 the next day. The dispatcher places the call when due.
-        customer_time_note = ""
-        try:
-            from app.services.callback_time import parse_callback_time, next_working_slot
+        # Automatic rescheduling from the customer's own words (offline)
+        from app.services.callback_time import parse_callback_time, next_working_slot
+        desired = parse_callback_time(transcript_text)
+        if desired is not None:
+            scheduled_dt = next_working_slot(desired)
 
-            desired = parse_callback_time(transcript_text)
-            if desired is not None:
-                scheduled_dt = next_working_slot(desired)
-                customer_time_note = (
-                    f" Customer asked: '{res.matched_utterance or 'callback'}' -> "
-                    f"auto-scheduled for {scheduled_dt.strftime('%d %b %Y, %I:%M %p')} IST."
-                )
-            elif scheduled_dt is not None:
-                scheduled_dt = next_working_slot(scheduled_dt)
-        except Exception as ce:
-            logger.debug(f"Callback-time scheduling skipped: {ce}")
+        # Precise notes and date handling according to client scenarios
+        t_low = (transcript_text or "").lower() + " " + (init_res.get("reason") or "").lower()
+        if "busy" in t_low or "व्यस्त" in t_low or res.category_id == 1:
+            notes_str = "Customer is busy. (Action: Schedule callback)"
+            scheduled_dt = None
+            res.requires_followup = True
+        elif "decide" in t_low or "think" in t_low or "सोचने" in t_low or "विचार" in t_low:
+            notes_str = "Customer needs time to decide. (Action: Schedule callback)"
+            scheduled_dt = None
+            res.requires_followup = True
+        elif scheduled_dt is not None:
+            notes_str = f"Customer requested callback for {scheduled_dt.strftime('%d %b %Y, %I:%M %p')}. (Action: Schedule callback)"
+            res.requires_followup = True
+        elif init_res.get("is_followup"):
+            notes_str = f"{init_res.get('reason')}. (Action: Schedule callback)"
+            scheduled_dt = None
+            res.requires_followup = True
+        else:
+            notes_str = f"Category {res.category_id}: {res.name}. Action: {res.action}. (Matched: '{res.matched_utterance or 'N/A'}')"
+
+        # Opt out guard
+        if init_res.get("is_opt_out"):
+            res.requires_followup = False
 
         followup_record_id = None
-        # Auto-create or update Followup record if category requires follow-up
         call_phone = call.phone_number or call.caller_number
         if res.requires_followup and call_phone:
             stmt = select(Followup).where(Followup.call_id == call.id)
             db_res = await session.execute(stmt)
             followup = db_res.scalar_one_or_none()
-            notes_str = f"Category {res.category_id}: {res.name}. Action: {res.action}. (Matched: '{res.matched_utterance or 'N/A'}')" + customer_time_note
 
             if not followup:
                 followup = Followup(
@@ -717,7 +998,7 @@ Return ONLY a valid JSON object with these exact keys:
                 )
                 session.add(followup)
             else:
-                followup.scheduled_at = scheduled_dt or followup.scheduled_at
+                followup.scheduled_at = scheduled_dt
                 followup.notes = notes_str
                 followup.status = "pending"
 

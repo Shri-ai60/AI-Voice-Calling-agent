@@ -160,16 +160,25 @@ _GREETING_ONLY_TURN = re.compile(
 _HARD_NEGATIVE_LABELS = {"opt_out", "explicit_not_interested", "refusal_local", "wrong_number"}
 
 
+_AUDIO_CHECK_RE = re.compile(r"(can\s+you\s+hear|audible|aawaz|awaaz|आवाज|ऐकू|सुन\s*पा\s*रहे)", re.IGNORECASE)
+
 def first_question_yes_evidence(turns: List[Dict[str, str]]) -> Optional[str]:
     """Return the customer's first-answer utterance if it was a YES to the
     first question, else None. The first substantive customer turn is their
-    answer to Q1 (the agent opens with greeting + Q1)."""
+    answer to Q1 (the agent opens with greeting + Q1). Audio check turns are ignored."""
+    last_agent_text = ""
     for t in turns:
+        if t["role"] == "agent":
+            last_agent_text = (t.get("text") or "").strip()
+            continue
         if t["role"] != "customer":
             continue
         text = (t["text"] or "").strip()
         if not text or _GREETING_ONLY_TURN.match(text):
             continue
+        # Audio check guard: do not classify 'can you hear me' -> 'yes' as Q1 YES
+        if last_agent_text and _AUDIO_CHECK_RE.search(last_agent_text):
+            return None
         if _AFFIRMATIVE_START.search(text.lower()):
             return text[:200]
         return None  # first real answer was not an affirmative

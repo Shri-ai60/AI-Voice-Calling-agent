@@ -38,51 +38,65 @@ def map_followup_to_response(f: Followup) -> FollowupResponse:
 async def sync_qualifying_calls_to_followups(db: AsyncSession):
     """
     Evaluates qualifying calls:
-    Only calls where the customer explicitly requested a callback (callback_requested)
-    with exact time extracted from transcript are added to Scheduled Follow-ups.
-    (Carrier busy or unanswered attempts are not spammed into Scheduled Follow-ups).
+    Syncs customers who requested callbacks, were busy, or needed time to decide.
+    Sets status="pending", scheduled_at=accurate time or None (for busy / needs time).
     """
     try:
-        stmt = (
-            select(Call)
-            .where(Call.disposition == "callback_requested")
-            .order_by(Call.created_at.desc())
-            .limit(100)
-        )
-        res = await db.execute(stmt)
-        candidate_calls = res.scalars().all()
+        from app.services.lead_intelligence_service import extract_turns_from_data, evaluate_initial_interest
+        from app.services.callback_time import schedule_from_transcript
 
-        if not candidate_calls:
-            return
+        existing_fu_call_ids = set((await db.execute(select(Followup.call_id))).scalars().all())
 
-        candidate_ids = [c.id for c in candidate_calls]
-        f_stmt = select(Followup.call_id).where(Followup.call_id.in_(candidate_ids))
-        existing_call_ids = set((await db.execute(f_stmt)).scalars().all())
+        stmt = select(Call).order_by(Call.created_at.desc()).limit(100)
+        candidate_calls = (await db.execute(stmt)).scalars().all()
 
         new_count = 0
         now = datetime.now(UTC)
 
         for call in candidate_calls:
-            if call.id in existing_call_ids:
+            if call.id in existing_fu_call_ids:
                 continue
 
             call_phone = call.phone_number or getattr(call, "caller_number", None)
             if not call_phone:
                 continue
 
-            from app.services.callback_time import schedule_from_transcript
             tr_stmt = select(Transcript).options(selectinload(Transcript.segments)).where(Transcript.call_id == call.id)
-            tr_res = await db.execute(tr_stmt)
-            tr = tr_res.scalar_one_or_none()
+            tr = (await db.execute(tr_stmt)).scalar_one_or_none()
             tr_text = ""
+            segs = []
             if tr and tr.segments:
+                segs = [{"speaker": s.speaker, "text": s.text, "sequence": s.sequence or 0} for s in tr.segments]
                 tr_text = "\n".join(f"{s.speaker}: {s.text}" for s in tr.segments)
-            
+
+            turns = extract_turns_from_data(segs, tr_text)
+            init_eval = evaluate_initial_interest(turns)
+
+            # Check if this call qualifies for a follow-up
+            is_followup = init_eval.get("is_followup") or ((call.disposition or "").lower() == "callback_requested")
+            if not is_followup:
+                continue
+
+            # Check opt out
+            if init_eval.get("is_opt_out"):
+                continue
+
+            # Extract callback time
             parsed_time = schedule_from_transcript(tr_text) if tr_text else None
-            sched = parsed_time or (now + timedelta(hours=2))
-            time_str = sched.strftime('%d %b %Y, %I:%M %p') if parsed_time else 'as requested'
-            notes = f"Customer requested callback for {time_str}. (Action: Schedule callback)"
-            status_val = "scheduled"
+            reason_str = init_eval.get("reason", "")
+            t_low = (tr_text or "").lower() + " " + reason_str.lower()
+
+            sched = parsed_time
+            if "busy" in t_low or "व्यस्त" in t_low:
+                notes = "Customer is busy. (Action: Schedule callback)"
+                sched = None
+            elif "decide" in t_low or "think" in t_low or "सोचने" in t_low or "विचार" in t_low:
+                notes = "Customer needs time to decide. (Action: Schedule callback)"
+                sched = None
+            elif sched:
+                notes = f"Customer requested callback for {sched.strftime('%d %b %Y, %I:%M %p')}. (Action: Schedule callback)"
+            else:
+                notes = "Customer requested callback. (Action: Schedule callback)"
 
             new_f = Followup(
                 tenant_id=call.tenant_id,
@@ -91,12 +105,12 @@ async def sync_qualifying_calls_to_followups(db: AsyncSession):
                 call_id=call.id,
                 phone_number=call_phone,
                 scheduled_at=sched,
-                status=status_val,
+                status="pending",
                 notes=notes,
                 created_at=call.created_at or now,
             )
             db.add(new_f)
-            existing_call_ids.add(call.id)
+            existing_fu_call_ids.add(call.id)
             new_count += 1
 
         if new_count > 0:

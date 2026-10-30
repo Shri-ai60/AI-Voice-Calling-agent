@@ -162,7 +162,7 @@ def parse_callback_time(transcript: str, now: Optional[datetime] = None) -> Opti
         day_offset = 2
     elif re.search(r"(tomorrow|kal|udya|udiya|कल|उद्या)", text, re.IGNORECASE):
         day_offset = 1
-    elif re.search(r"(today|aaj|aata|आज|आत्ता)", text, re.IGNORECASE):
+    elif re.search(r"(today|aaj|आज)", text, re.IGNORECASE):
         day_offset = 0
     elif re.search(r"(next week|पुढच्या आठवड्यात|अगले हफ्ते)", text, re.IGNORECASE):
         day_offset = 7
@@ -170,6 +170,9 @@ def parse_callback_time(transcript: str, now: Optional[datetime] = None) -> Opti
         for name, weekday in _WEEKDAYS.items():
             if re.search(rf"\b{name}\b", text, re.IGNORECASE):
                 day_offset = (weekday - now.weekday()) % 7
+                is_next = bool(re.search(rf"\b(?:next|अगले|पुढच्या)\s+{name}\b", text, re.IGNORECASE))
+                if day_offset == 0 or is_next:
+                    day_offset += 7
                 break
 
     clock = _parse_clock(text)
@@ -182,9 +185,7 @@ def parse_callback_time(transcript: str, now: Optional[datetime] = None) -> Opti
     ))
 
     if day_offset is None and clock is None:
-        if is_generic_callback:
-            # Default to 2 hours later
-            return now + timedelta(hours=2)
+        # Never invent a callback time when no day or clock was stated (e.g. Busy or Needs Time)
         return None
 
     base_date = now.date() + timedelta(days=day_offset or 0)

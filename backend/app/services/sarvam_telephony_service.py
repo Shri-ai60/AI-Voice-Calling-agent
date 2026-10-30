@@ -965,6 +965,44 @@ class SarvamTelephonyService:
                     await session.commit()
             sequence_counter += 1
 
+            # Immediate First-Question YES shortlisting (Issue 2)
+            try:
+                from app.services.lead_intelligence_service import lead_intelligence_service
+                q1_eval = lead_intelligence_service.evaluate_initial_interest(
+                    [{"role": "agent", "text": greeting}, {"role": "customer", "text": user_text}]
+                )
+                if q1_eval.get("is_interested"):
+                    async with AsyncSessionLocal() as q1_session:
+                        call_obj = (await q1_session.execute(select(Call).where(Call.id == call_id))).scalar_one_or_none()
+                        if call_obj:
+                            lead_stmt = select(Lead).where(Lead.call_id == call_id)
+                            existing_lead = (await q1_session.execute(lead_stmt)).scalar_one_or_none()
+                            phone_num = call_obj.phone_number or call_obj.caller_number
+                            lead_meta = {
+                                "classification": "INTERESTED",
+                                "interest_strength": "HIGH",
+                                "rule_applied": "Immediate First Question YES Policy",
+                                "first_question_yes": True,
+                                "evidence": q1_eval.get("evidence", user_text),
+                            }
+                            if not existing_lead and phone_num:
+                                new_lead = Lead(
+                                    tenant_id=call_obj.tenant_id,
+                                    agent_id=call_obj.agent_id,
+                                    contact_id=call_obj.contact_id,
+                                    call_id=call_id,
+                                    phone_number=phone_num,
+                                    score=0.95,
+                                    reason=f"Immediate First Question YES: customer answered '{user_text}'",
+                                    status="interested",
+                                    metadata_json=lead_meta,
+                                )
+                                q1_session.add(new_lead)
+                                await q1_session.commit()
+                                logger.info(f"[SarvamTelephony] Lead immediately shortlisted for call {call_id}: '{user_text}'")
+            except Exception as q1_err:
+                logger.debug(f"[SarvamTelephony] Immediate lead check notice: {q1_err}")
+
             # 1. Check if caller requested a callback or is busy / postponing call
             callback_keywords = [
                 "बाद में कॉल", "बाद में फोन", "नंतर फोन", "नंतर कॉल", "नंतर बोला", "नंतर सांगा",
@@ -1543,8 +1581,20 @@ class SarvamTelephonyService:
                             if requires_followup and call_phone:
                                 fu_stmt = select(Followup).where(Followup.call_id == call.id)
                                 existing_fu = (await session.execute(fu_stmt)).scalar_one_or_none()
-                                notes_txt = f"{reason_action}. (Matched: '{matched_text or 'callback'}')"
-                                target_time = sched_time or (datetime.now(UTC) + timedelta(hours=2))
+
+                                # Accurate context note based on customer intent
+                                m_low = (matched_text or "").lower() + " " + (full_transcript or "").lower()
+                                target_time = sched_time
+                                if "busy" in m_low or "व्यस्त" in m_low:
+                                    notes_txt = "Customer is busy. (Action: Schedule callback)"
+                                    target_time = None
+                                elif "decide" in m_low or "think" in m_low or "सोचने" in m_low or "विचार" in m_low:
+                                    notes_txt = "Customer needs time to decide. (Action: Schedule callback)"
+                                    target_time = None
+                                elif target_time:
+                                    notes_txt = f"Customer requested callback for {target_time.strftime('%d %b %Y, %I:%M %p')}. (Action: Schedule callback)"
+                                else:
+                                    notes_txt = f"{reason_action}. (Matched: '{matched_text or 'callback'}')"
 
                                 if not existing_fu:
                                     new_fu = Followup(
@@ -1554,16 +1604,18 @@ class SarvamTelephonyService:
                                         call_id=call.id,
                                         phone_number=call_phone,
                                         scheduled_at=target_time,
-                                        status="scheduled",
+                                        status="pending",
                                         notes=notes_txt,
                                     )
                                     session.add(new_fu)
-                                    logger.info(f"[SarvamTelephony] Auto-scheduled Followup for call {call.id} at {target_time}")
+                                    logger.info(f"[SarvamTelephony] Followup registered for call {call.id} (status=pending, scheduled_at={target_time})")
                                 else:
                                     existing_fu.scheduled_at = target_time
                                     existing_fu.notes = notes_txt
-                                    existing_fu.status = "scheduled"
-                                call.disposition = "callback_requested"
+                                    existing_fu.status = "pending"
+
+                                if not (intel and intel.get("is_interested")):
+                                    call.disposition = "callback_requested"
                         except Exception as fu_err:
                             logger.warning(f"[SarvamTelephony] Auto-followup scheduling note: {fu_err}")
 

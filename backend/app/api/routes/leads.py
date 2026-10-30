@@ -5,6 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -40,6 +41,58 @@ def map_lead_to_response(l: Lead) -> LeadResponse:
     )
 
 
+async def sync_qualifying_calls_to_leads(db: AsyncSession):
+    try:
+        from app.models.call import Call, Transcript
+        from app.services.lead_intelligence_service import lead_intelligence_service
+
+        existing_lead_call_ids = set((await db.execute(select(Lead.call_id))).scalars().all())
+
+        c_stmt = select(Call).order_by(Call.created_at.desc()).limit(100)
+        calls = (await db.execute(c_stmt)).scalars().all()
+
+        for call in calls:
+            if call.id in existing_lead_call_ids:
+                continue
+
+            call_phone = call.phone_number or getattr(call, "caller_number", None)
+            if not call_phone:
+                continue
+
+            tr_stmt = select(Transcript).options(selectinload(Transcript.segments)).where(Transcript.call_id == call.id)
+            tr = (await db.execute(tr_stmt)).scalar_one_or_none()
+            if not tr or not tr.segments:
+                continue
+
+            segs = [
+                {"speaker": s.speaker, "text": s.text, "sequence": s.sequence or 0}
+                for s in tr.segments
+            ]
+            first_yes = lead_intelligence_service.detect_first_question_yes(segments=segs)
+            if first_yes:
+                new_l = Lead(
+                    tenant_id=call.tenant_id,
+                    contact_id=call.contact_id,
+                    agent_id=call.agent_id,
+                    call_id=call.id,
+                    phone_number=call_phone,
+                    status="interested",
+                    score=0.95,
+                    reason="First Question YES: customer responded positively to initial interest question",
+                    metadata_json={
+                        "classification": "INTERESTED",
+                        "first_question_yes": True,
+                        "rule_applied": "First Question YES Policy",
+                    },
+                    created_at=call.created_at or datetime.now(UTC),
+                )
+                db.add(new_l)
+                existing_lead_call_ids.add(call.id)
+        await db.commit()
+    except Exception as e:
+        logger.debug(f"Sync qualifying calls to leads notice: {e}")
+
+
 @router.get("", response_model=List[LeadResponse])
 async def list_leads(
     agent_id: Optional[str] = None,
@@ -50,8 +103,9 @@ async def list_leads(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    List persisted leads.
+    List persisted leads with auto-sync from qualified calls.
     """
+    await sync_qualifying_calls_to_leads(db)
     t_id = tenant_id or business_id
     stmt = select(Lead).order_by(Lead.created_at.desc())
     if agent_id:

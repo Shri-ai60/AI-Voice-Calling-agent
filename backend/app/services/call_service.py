@@ -383,7 +383,10 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
         try:
             intel = await lead_intelligence_service.analyze_call(session, call)
             disp = (call.disposition or "").lower()
-            if disp == "interested":
+            is_qualified_lead = (disp == "interested") or bool(intel.get("is_interested")) or bool(intel.get("first_question_yes"))
+            is_opt_out = bool(intel.get("opt_out_detected"))
+
+            if is_qualified_lead and not is_opt_out:
                 lead_stmt = select(Lead).where(Lead.call_id == call.id)
                 l_res = await session.execute(lead_stmt)
                 lead = l_res.scalar_one_or_none()
@@ -396,11 +399,17 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
                         phone_number=call.phone_number or call.caller_number,
                         status="interested",
                         score=intel.get("confidence_score", 0.85),
-                        reason=intel.get("reasoning", call.disposition),
+                        reason=intel.get("reasoning", call.disposition or "Interested lead"),
                         metadata_json=intel,
                     )
                     session.add(lead)
-            else:
+                else:
+                    lead.status = "interested"
+                    lead.score = max(lead.score or 0.0, intel.get("confidence_score", 0.85))
+                    lead.reason = intel.get("reasoning", lead.reason)
+                    lead.metadata_json = intel
+                    session.add(lead)
+            elif is_opt_out or (disp == "not_interested" and not is_qualified_lead):
                 lead_stmt = select(Lead).where(Lead.call_id == call.id)
                 l_res = await session.execute(lead_stmt)
                 false_lead = l_res.scalar_one_or_none()
@@ -449,7 +458,7 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
                 else:
                     followup.notes = status_notes
                     followup.scheduled_at = scheduled_time
-            elif (f_info.get("requires_followup") or (call.disposition or "").lower() == "callback_requested") and call_phone:
+            elif (f_info.get("requires_followup") or (call.disposition or "").lower() == "callback_requested" or intel.get("callback_requested")) and call_phone:
                 from app.services.callback_time import schedule_from_transcript
                 cat_id = f_info.get("category_id")
                 cat_name = f_info.get("name") or "CLIENT REQUESTS CALL BACK LATER"
@@ -465,11 +474,19 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
                         scheduled_time = datetime.fromisoformat(sched_iso.replace("Z", "+00:00"))
                     except Exception:
                         pass
-                if not scheduled_time:
-                    scheduled_time = datetime.now(UTC) + timedelta(hours=2)
 
-                time_note = f" for {scheduled_time.strftime('%d %b %Y, %I:%M %p')}" if parsed_time else ""
-                f_notes = f"{cat_name}: {action}{time_note}. (Matched: '{matched or 'N/A'}')"
+                # Accurate context note based on customer intent
+                m_low = (matched or "").lower() + " " + (transcript_text or "").lower()
+                if "busy" in m_low or "व्यस्त" in m_low:
+                    f_notes = "Customer is busy. (Action: Schedule callback)"
+                    scheduled_time = None
+                elif "decide" in m_low or "think" in m_low or "सोचने" in m_low or "विचार" in m_low:
+                    f_notes = "Customer needs time to decide. (Action: Schedule callback)"
+                    scheduled_time = None
+                elif scheduled_time:
+                    f_notes = f"Customer requested callback for {scheduled_time.strftime('%d %b %Y, %I:%M %p')}. (Action: Schedule callback)"
+                else:
+                    f_notes = f"{cat_name}: {action}. (Matched: '{matched or 'N/A'}')"
 
                 if not followup:
                     followup = Followup(
@@ -479,14 +496,14 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
                         call_id=call.id,
                         phone_number=call_phone,
                         scheduled_at=scheduled_time,
-                        status="scheduled",
+                        status="pending",
                         notes=f_notes,
                     )
                     session.add(followup)
                 else:
                     followup.notes = f_notes
-                    followup.scheduled_at = scheduled_time or followup.scheduled_at
-                    followup.status = "scheduled" 
+                    followup.scheduled_at = scheduled_time
+                    followup.status = "pending" 
         except Exception as e:
             logger.debug(f"Lead intelligence & followup auto-analysis notice: {e}")
 
