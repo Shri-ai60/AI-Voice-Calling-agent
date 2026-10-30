@@ -101,7 +101,7 @@ export const ModernCalendar: React.FC = () => {
             <button
               type="button"
               onClick={() => moveMonth(-1)}
-              className="w-10 h-10 rounded-full bg-white border border-[#E4E7EC] flex items-center justify-center text-[#344054] hover:bg-[#F9FAFB] transition-colors"
+              className="w-10 h-10 rounded-full bg-white dark:bg-white/[0.06] border border-[#E4E7EC] dark:border-white/[0.1] flex items-center justify-center text-[#344054] dark:text-neutral-200 hover:bg-[#F9FAFB] dark:hover:bg-white/[0.1] transition-colors"
               aria-label="Previous month"
             >
               <ChevronLeft className="w-4.5 h-4.5" />
@@ -112,14 +112,14 @@ export const ModernCalendar: React.FC = () => {
                 setCursor(new Date(today.getFullYear(), today.getMonth(), 1));
                 setSelected(isoOf(today));
               }}
-              className="h-10 px-4 rounded-full bg-white border border-[#E4E7EC] text-[13px] font-bold text-[#344054] hover:bg-[#F9FAFB] transition-colors"
+              className="h-10 px-4 rounded-full bg-white dark:bg-white/[0.06] border border-[#E4E7EC] dark:border-white/[0.1] text-[13px] font-bold text-[#344054] dark:text-neutral-200 hover:bg-[#F9FAFB] dark:hover:bg-white/[0.1] transition-colors"
             >
               Today
             </button>
             <button
               type="button"
               onClick={() => moveMonth(1)}
-              className="w-10 h-10 rounded-full bg-white border border-[#E4E7EC] flex items-center justify-center text-[#344054] hover:bg-[#F9FAFB] transition-colors"
+              className="w-10 h-10 rounded-full bg-white dark:bg-white/[0.06] border border-[#E4E7EC] dark:border-white/[0.1] flex items-center justify-center text-[#344054] dark:text-neutral-200 hover:bg-[#F9FAFB] dark:hover:bg-white/[0.1] transition-colors"
               aria-label="Next month"
             >
               <ChevronRight className="w-4.5 h-4.5" />
@@ -131,18 +131,18 @@ export const ModernCalendar: React.FC = () => {
       <MCard className="overflow-hidden mb-6">
         <div className="px-6 pt-5 pb-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <span className="w-9 h-9 rounded-xl bg-orange-50 border border-orange-100 flex items-center justify-center">
-              <CalendarDays className="w-[18px] h-[18px] text-orange-600" strokeWidth={1.9} />
+            <span className="w-9 h-9 rounded-xl bg-orange-50 dark:bg-orange-500/15 border border-orange-100 dark:border-orange-500/30 flex items-center justify-center">
+              <CalendarDays className="w-[18px] h-[18px] text-orange-600 dark:text-orange-400" strokeWidth={1.9} />
             </span>
-            <h3 className="text-[17px] font-extrabold tracking-tight text-[#101828]">{monthLabel}</h3>
+            <h3 className="text-[17px] font-extrabold tracking-tight text-[#101828] dark:text-white">{monthLabel}</h3>
           </div>
           {summaryLoading && (
-            <span className="text-xs text-[#98A2B3]">Loading monthly activity…</span>
+            <span className="text-xs text-[#98A2B3] dark:text-neutral-400">Loading monthly activity…</span>
           )}
         </div>
-        <div className="grid grid-cols-7 border-t border-[#F1F2F4]">
+        <div className="grid grid-cols-7 border-t border-[#F1F2F4] dark:border-white/[0.08]">
           {WEEKDAYS.map((w) => (
-            <div key={w} className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-[#98A2B3] border-b border-[#F1F2F4]">
+            <div key={w} className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-[#98A2B3] dark:text-neutral-400 border-b border-[#F1F2F4] dark:border-white/[0.08]">
               {w}
             </div>
           ))}
@@ -161,16 +161,22 @@ export const ModernCalendar: React.FC = () => {
                   }
                 }}
                 className={clsx(
-                  'h-[104px] p-2.5 text-left align-top border-b border-r border-[#F5F6F7] transition-colors [&:nth-child(7n)]:border-r-0',
-                  cell.inMonth ? 'bg-white hover:bg-[#FAFAFB]' : 'bg-[#FBFBFC]',
-                  isSelected && 'bg-orange-50/60 hover:bg-orange-50/60'
+                  'h-[104px] p-2.5 text-left align-top border-b border-r border-[#F5F6F7] dark:border-white/[0.07] transition-colors [&:nth-child(7n)]:border-r-0',
+                  cell.inMonth
+                    ? 'bg-white dark:bg-transparent hover:bg-[#FAFAFB] dark:hover:bg-white/[0.04]'
+                    : 'bg-[#FBFBFC] dark:bg-white/[0.02]',
+                  isSelected && 'bg-orange-50/60 dark:bg-orange-500/15 hover:bg-orange-50/60 dark:hover:bg-orange-500/20'
                 )}
               >
                 <span
                   className={clsx(
                     'inline-flex w-7 h-7 items-center justify-center rounded-full text-[13px] font-bold tabular-nums',
-                    isToday ? 'bg-[#101828] text-white' : cell.inMonth ? 'text-[#344054]' : 'text-[#C4CBD4]',
-                    isSelected && !isToday && 'ring-2 ring-orange-400'
+                    isToday
+                      ? 'bg-orange-500 text-white font-black shadow-md ring-2 ring-orange-500/30'
+                      : cell.inMonth
+                      ? 'text-[#344054] dark:text-neutral-200'
+                      : 'text-[#C4CBD4] dark:text-neutral-600',
+                    isSelected && !isToday && 'ring-2 ring-orange-400 text-orange-600 dark:text-orange-400 font-extrabold'
                   )}
                 >
                   {cell.date.getDate()}
@@ -178,19 +184,19 @@ export const ModernCalendar: React.FC = () => {
                 {c && (c.calls > 0 || c.leads > 0 || c.followups > 0) && (
                   <span className="mt-1.5 space-y-1 block">
                     {c.calls > 0 && (
-                      <span className="flex items-center gap-1 text-[11px] font-semibold text-[#667085]">
+                      <span className="flex items-center gap-1 text-[11px] font-semibold text-[#667085] dark:text-neutral-300">
                         <span className="w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
                         {c.calls} call{c.calls === 1 ? '' : 's'}
                       </span>
                     )}
                     {c.leads > 0 && (
-                      <span className="flex items-center gap-1 text-[11px] font-semibold text-[#667085]">
+                      <span className="flex items-center gap-1 text-[11px] font-semibold text-[#667085] dark:text-neutral-300">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                         {c.leads} lead{c.leads === 1 ? '' : 's'}
                       </span>
                     )}
                     {c.followups > 0 && (
-                      <span className="flex items-center gap-1 text-[11px] font-semibold text-[#667085]">
+                      <span className="flex items-center gap-1 text-[11px] font-semibold text-[#667085] dark:text-neutral-300">
                         <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
                         {c.followups} due
                       </span>
@@ -203,39 +209,39 @@ export const ModernCalendar: React.FC = () => {
         </div>
       </MCard>
 
-      <h3 className="text-[16px] font-extrabold tracking-tight text-[#101828] mb-3">{selectedLabel}</h3>
-      {dayLoading && <MCard className="p-8 text-center text-sm text-[#98A2B3]">Loading date activity…</MCard>}
+      <h3 className="text-[16px] font-extrabold tracking-tight text-[#101828] dark:text-white mb-3">{selectedLabel}</h3>
+      {dayLoading && <MCard className="p-8 text-center text-sm text-[#98A2B3] dark:text-neutral-400">Loading date activity…</MCard>}
       {!dayLoading && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <MCard className="p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <PhoneCall className="w-4 h-4 text-orange-600" />
-                <h4 className="text-sm font-bold text-[#101828]">Calls ({calls.length})</h4>
+                <PhoneCall className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                <h4 className="text-sm font-bold text-[#101828] dark:text-white">Calls ({calls.length})</h4>
               </div>
               {calls.length > 0 && (
                 <button
                   type="button"
                   onClick={() => navigate('/calls')}
-                  className="text-[11px] font-semibold text-orange-600 hover:text-orange-500 flex items-center gap-0.5"
+                  className="text-[11px] font-semibold text-orange-600 dark:text-orange-400 hover:text-orange-500 flex items-center gap-0.5"
                 >
                   All Calls <ExternalLink className="w-3 h-3" />
                 </button>
               )}
             </div>
             <div className="space-y-3">
-              {calls.length === 0 && <p className="text-[13px] text-[#98A2B3]">No calls on this date.</p>}
+              {calls.length === 0 && <p className="text-[13px] text-[#98A2B3] dark:text-neutral-400">No calls on this date.</p>}
               {calls.slice(0, 10).map((c) => {
                 const meta = callStateMeta(c.state);
                 return (
                   <div
                     key={c.call_id}
                     onClick={() => navigate('/calls')}
-                    className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-[#F9FAFB] cursor-pointer transition-colors"
+                    className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-[#F9FAFB] dark:hover:bg-white/[0.04] cursor-pointer transition-colors"
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-bold text-[#101828] tabular-nums truncate">{c.phone_number}</p>
-                      <p className="text-[11px] text-[#98A2B3] truncate">
+                      <p className="text-[13px] font-bold text-[#101828] dark:text-white tabular-nums truncate">{c.phone_number}</p>
+                      <p className="text-[11px] text-[#98A2B3] dark:text-neutral-400 truncate">
                         {timeOf(c.created_at)} · {(c.agent_id && agentName.get(c.agent_id)) || 'AI Agent'} · {fmtDuration(c.duration)}
                       </p>
                     </div>
@@ -244,7 +250,7 @@ export const ModernCalendar: React.FC = () => {
                 );
               })}
               {calls.length > 10 && (
-                <p className="text-[11px] text-[#98A2B3] pt-1 text-center">+ {calls.length - 10} more calls in history</p>
+                <p className="text-[11px] text-[#98A2B3] dark:text-neutral-400 pt-1 text-center">+ {calls.length - 10} more calls in history</p>
               )}
             </div>
           </MCard>
@@ -252,32 +258,32 @@ export const ModernCalendar: React.FC = () => {
           <MCard className="p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Target className="w-4 h-4 text-emerald-600" />
-                <h4 className="text-sm font-bold text-[#101828]">Leads ({leads.length})</h4>
+                <Target className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <h4 className="text-sm font-bold text-[#101828] dark:text-white">Leads ({leads.length})</h4>
               </div>
               {leads.length > 0 && (
                 <button
                   type="button"
                   onClick={() => navigate('/leads')}
-                  className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-500 flex items-center gap-0.5"
+                  className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 flex items-center gap-0.5"
                 >
                   All Leads <ExternalLink className="w-3 h-3" />
                 </button>
               )}
             </div>
             <div className="space-y-3">
-              {leads.length === 0 && <p className="text-[13px] text-[#98A2B3]">No leads captured on this date.</p>}
+              {leads.length === 0 && <p className="text-[13px] text-[#98A2B3] dark:text-neutral-400">No leads captured on this date.</p>}
               {leads.slice(0, 10).map((l) => {
                 const meta = leadStatusMeta(l.status || 'new');
                 return (
                   <div
                     key={l.lead_id}
                     onClick={() => navigate('/leads')}
-                    className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-[#F9FAFB] cursor-pointer transition-colors"
+                    className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-[#F9FAFB] dark:hover:bg-white/[0.04] cursor-pointer transition-colors"
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-bold text-[#101828] truncate">{l.name || 'Interested caller'}</p>
-                      <p className="text-[11px] text-[#98A2B3] tabular-nums truncate">
+                      <p className="text-[13px] font-bold text-[#101828] dark:text-white truncate">{l.name || 'Interested caller'}</p>
+                      <p className="text-[11px] text-[#98A2B3] dark:text-neutral-400 tabular-nums truncate">
                         {l.phone_number} · score {Math.round(scorePct(l.score))}
                       </p>
                     </div>
@@ -286,7 +292,7 @@ export const ModernCalendar: React.FC = () => {
                 );
               })}
               {leads.length > 10 && (
-                <p className="text-[11px] text-[#98A2B3] pt-1 text-center">+ {leads.length - 10} more leads captured</p>
+                <p className="text-[11px] text-[#98A2B3] dark:text-neutral-400 pt-1 text-center">+ {leads.length - 10} more leads captured</p>
               )}
             </div>
           </MCard>
@@ -294,30 +300,30 @@ export const ModernCalendar: React.FC = () => {
           <MCard className="p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <CalendarClock className="w-4 h-4 text-violet-600" />
-                <h4 className="text-sm font-bold text-[#101828]">Follow-ups due ({followups.length})</h4>
+                <CalendarClock className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                <h4 className="text-sm font-bold text-[#101828] dark:text-white">Follow-ups due ({followups.length})</h4>
               </div>
               {followups.length > 0 && (
                 <button
                   type="button"
                   onClick={() => navigate('/followups')}
-                  className="text-[11px] font-semibold text-violet-600 hover:text-violet-500 flex items-center gap-0.5"
+                  className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 hover:text-violet-500 flex items-center gap-0.5"
                 >
                   All Follow-ups <ExternalLink className="w-3 h-3" />
                 </button>
               )}
             </div>
             <div className="space-y-3">
-              {followups.length === 0 && <p className="text-[13px] text-[#98A2B3]">No follow-ups due on this date.</p>}
+              {followups.length === 0 && <p className="text-[13px] text-[#98A2B3] dark:text-neutral-400">No follow-ups due on this date.</p>}
               {followups.slice(0, 10).map((f) => (
                 <div
                   key={f.followup_id}
                   onClick={() => navigate('/followups')}
-                  className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-[#F9FAFB] cursor-pointer transition-colors"
+                  className="flex items-center gap-2.5 p-2 rounded-xl hover:bg-[#F9FAFB] dark:hover:bg-white/[0.04] cursor-pointer transition-colors"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-bold text-[#101828] tabular-nums truncate">{f.phone_number}</p>
-                    <p className="text-[11px] text-[#98A2B3] truncate">
+                    <p className="text-[13px] font-bold text-[#101828] dark:text-white tabular-nums truncate">{f.phone_number}</p>
+                    <p className="text-[11px] text-[#98A2B3] dark:text-neutral-400 truncate">
                       {timeOf(f.scheduled_at)} · {f.notes || 'Scheduled callback'}
                     </p>
                   </div>
@@ -327,7 +333,7 @@ export const ModernCalendar: React.FC = () => {
                 </div>
               ))}
               {followups.length > 10 && (
-                <p className="text-[11px] text-[#98A2B3] pt-1 text-center">+ {followups.length - 10} more follow-ups scheduled</p>
+                <p className="text-[11px] text-[#98A2B3] dark:text-neutral-400 pt-1 text-center">+ {followups.length - 10} more follow-ups scheduled</p>
               )}
             </div>
           </MCard>

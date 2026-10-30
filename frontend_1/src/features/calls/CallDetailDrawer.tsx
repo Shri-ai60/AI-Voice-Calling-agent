@@ -19,6 +19,8 @@ import {
   Tag,
   RefreshCw,
   CalendarClock,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { CallDocument, TranscriptSegment } from '../../types/api';
 
@@ -30,6 +32,7 @@ export interface CallDetailDrawerProps {
 export const CallDetailDrawer: React.FC<CallDetailDrawerProps> = ({ callId, onClose }) => {
   const toast = useToast();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const { data: call, isLoading: callLoading, refetch: refetchCall } = useQuery<CallDocument>({
     queryKey: ['call', callId],
@@ -48,6 +51,13 @@ export const CallDetailDrawer: React.FC<CallDetailDrawerProps> = ({ callId, onCl
     queryFn: () => callsApi.getInterest(callId!),
     enabled: !!callId,
   });
+
+  const handleCopyId = (id: string) => {
+    navigator.clipboard.writeText(id);
+    setCopied(true);
+    toast.success('Copied', 'Call ID copied to clipboard');
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const handleAnalyzeInterest = async () => {
     if (!callId) return;
@@ -70,7 +80,21 @@ export const CallDetailDrawer: React.FC<CallDetailDrawerProps> = ({ callId, onCl
       isOpen={!!callId}
       onClose={onClose}
       title={call ? `Call Telemetry: ${call.phone_number}` : 'Call Details'}
-      subtitle={call ? `ID: ${call.call_id}` : undefined}
+      subtitle={
+        call ? (
+          <span className="inline-flex items-center gap-1.5 group">
+            <span>ID: {call.call_id}</span>
+            <button
+              type="button"
+              onClick={() => handleCopyId(call.call_id)}
+              title="Copy Call ID"
+              className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors cursor-pointer"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+          </span>
+        ) : undefined
+      }
       width="xl"
     >
       {callLoading ? (
@@ -320,6 +344,19 @@ export const CallDetailDrawer: React.FC<CallDetailDrawerProps> = ({ callId, onCl
             </div>
           )}
 
+          {/* Bottom Footer Actions */}
+          <div className="pt-4 border-t border-slate-200/80 dark:border-white/[0.08] flex items-center justify-between">
+            <span className="text-xs text-slate-500 dark:text-neutral-400 font-mono">
+              Call State: <span className="uppercase font-semibold text-slate-800 dark:text-white">{call.state}</span>
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onClose}
+            >
+              Close Details
+            </Button>
+          </div>
         </div>
       )}
     </Drawer>

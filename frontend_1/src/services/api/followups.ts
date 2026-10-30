@@ -21,4 +21,14 @@ export const followupsApi = {
     const res = await apiClient.patch<FollowupDocument>(`/followups/${id}`, payload);
     return res.data;
   },
+
+  dispatchDueFollowups: async (): Promise<{ placed_count: number; message: string }> => {
+    const res = await apiClient.post<{ placed_count: number; message: string }>('/followups/dispatch');
+    return res.data;
+  },
+
+  callFollowup: async (id: string): Promise<{ status: string; call_id: string; message: string; phone_number: string }> => {
+    const res = await apiClient.post<{ status: string; call_id: string; message: string; phone_number: string }>(`/followups/${id}/call`);
+    return res.data;
+  },
 };

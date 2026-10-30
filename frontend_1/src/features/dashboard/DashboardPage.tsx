@@ -17,7 +17,7 @@ import {
   Target,
   FileText,
   ChevronDown,
-  Send,
+  CalendarClock,
   UserPlus,
   MoreVertical,
   Zap,
@@ -528,7 +528,7 @@ export const DashboardPage: React.FC = () => {
                     No calls currently active
                   </h4>
                   <p className="text-[12.5px] text-slate-600 dark:text-[#C9C9D1] mt-1 max-w-sm">
-                    All channels are idle. Trigger outbound calls via Campaigns or Quick Call.
+                    All channels are idle. Trigger outbound calls via Quick Call or Follow-ups.
                   </p>
                 </div>
               ) : (
@@ -848,14 +848,14 @@ export const DashboardPage: React.FC = () => {
                   <span className="text-xs font-semibold">Quick Call</span>
                 </button>
 
-                {/* 2. Start Campaign */}
+                {/* 2. Follow-ups */}
                 <button
                   type="button"
-                  onClick={() => navigate('/calls')}
+                  onClick={() => navigate('/followups')}
                   className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-50 dark:bg-white/[0.04] hover:bg-slate-100 dark:hover:bg-white/[0.07] border border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-neutral-300 hover:text-slate-900 dark:hover:text-white transition-all group shadow-sm"
                 >
-                  <Send className="w-4 h-4 mb-1.5 transition-transform group-hover:scale-110" />
-                  <span className="text-xs font-semibold">Start Campaign</span>
+                  <CalendarClock className="w-4 h-4 mb-1.5 transition-transform group-hover:scale-110" />
+                  <span className="text-xs font-semibold">Follow-ups</span>
                 </button>
 
                 {/* 3. Add Contact */}

@@ -12,7 +12,7 @@ import { useToast } from '../../app/providers/ToastProvider';
 import { useBusiness } from '../../app/providers/BusinessProvider';
 import { getErrorMessage } from '../../services/api/client';
 import { FollowupDocument, FollowupStatus } from '../../types/api';
-import { CalendarClock, RefreshCw, CheckCircle } from 'lucide-react';
+import { CalendarClock, RefreshCw, CheckCircle, PhoneCall } from 'lucide-react';
 import { format } from 'date-fns';
 import { TimeFilterAndExport } from '../../components/ui/TimeFilterAndExport';
 import { exportToExcel, filterByDateRange, TimeFilterRange } from '../../utils/excelExport';
@@ -37,6 +37,16 @@ export const FollowupsPage: React.FC = () => {
   const displayFollowups = React.useMemo(() => {
     return filterByDateRange(followups, (f) => f.scheduled_at || f.created_at, timeRange);
   }, [followups, timeRange]);
+
+  const dueCount = React.useMemo(() => {
+    const now = Date.now();
+    return followups.filter(
+      (f) =>
+        (f.status === 'scheduled' || f.status === 'pending') &&
+        f.scheduled_at &&
+        new Date(f.scheduled_at).getTime() <= now
+    ).length;
+  }, [followups]);
 
   const handleExportExcel = () => {
     const exportRows = displayFollowups.map((f) => ({
@@ -66,6 +76,32 @@ export const FollowupsPage: React.FC = () => {
     },
     onError: (err) => {
       toast.error('Failed to update follow-up', getErrorMessage(err));
+    },
+  });
+
+  const dispatchMutation = useMutation({
+    mutationFn: () => followupsApi.dispatchDueFollowups(),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['followups'] });
+      if (data.placed_count > 0) {
+        toast.success('Follow-up Calls Dispatched', `${data.placed_count} scheduled call(s) have been initiated!`);
+      } else {
+        toast.info('No Follow-ups Due', 'All scheduled follow-up calls are timed for later or completed.');
+      }
+    },
+    onError: (err) => {
+      toast.error('Failed to dispatch follow-up calls', getErrorMessage(err));
+    },
+  });
+
+  const callMutation = useMutation({
+    mutationFn: (id: string) => followupsApi.callFollowup(id),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['followups'] });
+      toast.success('Follow-up Call Initiated', `Dialing ${data.phone_number}...`);
+    },
+    onError: (err) => {
+      toast.error('Call failed', getErrorMessage(err));
     },
   });
 
@@ -115,11 +151,19 @@ export const FollowupsPage: React.FC = () => {
       header: 'Scheduled Callback Time',
       sortable: true,
       render: (f) => {
+        const isDue = (f.status === 'scheduled' || f.status === 'pending') && f.scheduled_at && new Date(f.scheduled_at).getTime() <= Date.now();
         try {
           return (
-            <span className="text-xs font-mono font-medium text-slate-700 dark:text-zinc-300">
-              {format(new Date(f.scheduled_at), 'MMM dd, yyyy · HH:mm')}
-            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-mono font-medium text-slate-700 dark:text-zinc-300">
+                {format(new Date(f.scheduled_at), 'MMM dd, yyyy · HH:mm')}
+              </span>
+              {isDue && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 animate-pulse">
+                  ⏰ DUE NOW
+                </span>
+              )}
+            </div>
           );
         } catch {
           return <span className="text-xs font-mono text-slate-500">{f.scheduled_at}</span>;
@@ -150,9 +194,15 @@ export const FollowupsPage: React.FC = () => {
         const notesLower = f.notes.toLowerCase();
         const isBusy = f.notes.includes('PHONE / LINE BUSY') || f.notes.includes('Category 2') || notesLower.includes('busy');
         const isNotAnswered = f.notes.includes('CALL NOT ANSWERED') || f.notes.includes('Category 3') || notesLower.includes('no_answer') || notesLower.includes('not answered');
+        const isRequested = notesLower.includes('requested') || notesLower.includes('callback') || notesLower.includes('category 8');
         return (
           <div className="flex flex-col gap-1 max-w-md">
             <div className="flex items-center gap-1.5 flex-wrap">
+              {isRequested && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-400 border border-emerald-200/50 dark:border-emerald-800/40 shrink-0">
+                  📞 Requested by Customer
+                </span>
+              )}
               {isBusy && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950/70 text-amber-700 dark:text-amber-400 border border-amber-200/50 dark:border-amber-800/40 shrink-0">
                   ⚠️ Line Busy
@@ -175,11 +225,32 @@ export const FollowupsPage: React.FC = () => {
       key: 'actions',
       header: 'Actions',
       align: 'right',
-      render: (f) => (
-        <Button variant="outline" size="xs" onClick={() => handleOpenEdit(f)}>
-          Manage
-        </Button>
-      ),
+      render: (f) => {
+        const isOpen = f.status !== 'completed' && f.status !== 'cancelled';
+        return (
+          <div className="flex items-center justify-end gap-1.5">
+            {isOpen && (
+              <button
+                type="button"
+                onClick={() => callMutation.mutate(f.followup_id)}
+                disabled={callMutation.isPending && callMutation.variables === f.followup_id}
+                title="Call Now"
+                aria-label="Call Now"
+                className="w-7 h-7 rounded-lg bg-orange-500 hover:bg-orange-400 active:bg-orange-600 text-white shadow-sm flex items-center justify-center transition-all cursor-pointer disabled:opacity-50 active:scale-95 border border-orange-400/30 shrink-0"
+              >
+                {callMutation.isPending && callMutation.variables === f.followup_id ? (
+                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <PhoneCall className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+            <Button variant="outline" size="xs" onClick={() => handleOpenEdit(f)}>
+              Manage
+            </Button>
+          </div>
+        );
+      },
     },
   ];
 
@@ -195,6 +266,15 @@ export const FollowupsPage: React.FC = () => {
         }
         actions={
           <div className="flex items-center gap-2.5 flex-wrap">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => dispatchMutation.mutate()}
+              isLoading={dispatchMutation.isPending}
+              leftIcon={<PhoneCall className="w-4 h-4" />}
+            >
+              Start Follow-up Calls ({dueCount} Due)
+            </Button>
             <TimeFilterAndExport
               timeRange={timeRange}
               onTimeRangeChange={setTimeRange}

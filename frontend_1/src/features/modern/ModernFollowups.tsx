@@ -1,7 +1,9 @@
 import React, { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, AlertCircle, CalendarCheck2, CheckCircle2, ListChecks, Check } from 'lucide-react';
+import { CalendarClock, AlertCircle, CalendarCheck2, CheckCircle2, ListChecks, Check, PhoneCall } from 'lucide-react';
 import { followupsApi } from '../../services/api/followups';
+import { useToast } from '../../app/providers/ToastProvider';
+import { getErrorMessage } from '../../services/api/client';
 import type { FollowupDocument } from '../../types/api';
 import { MCard, MStatCard, MPageHeader, Pill } from './ui';
 
@@ -17,15 +19,43 @@ function dayBucket(iso: string): 'overdue' | 'today' | 'upcoming' {
 
 export const ModernFollowups: React.FC = () => {
   const queryClient = useQueryClient();
+  const toast = useToast();
+
   const { data: followups = [], isLoading } = useQuery<FollowupDocument[]>({
     queryKey: ['followups'],
     queryFn: () => followupsApi.getFollowups({ limit: 200 }),
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   const completeMutation = useMutation({
     mutationFn: (id: string) => followupsApi.updateFollowup(id, { status: 'completed' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['followups'] }),
+  });
+
+  const dispatchMutation = useMutation({
+    mutationFn: () => followupsApi.dispatchDueFollowups(),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['followups'] });
+      if (data.placed_count > 0) {
+        toast.success('Follow-up Calls Dispatched', `${data.placed_count} scheduled call(s) have been initiated!`);
+      } else {
+        toast.info('No Follow-ups Due', 'All scheduled follow-up calls are timed for later or completed.');
+      }
+    },
+    onError: (err) => {
+      toast.error('Dispatch failed', getErrorMessage(err));
+    },
+  });
+
+  const callMutation = useMutation({
+    mutationFn: (id: string) => followupsApi.callFollowup(id),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['followups'] });
+      toast.success('Follow-up Call Initiated', `Connecting outbound call to ${data.phone_number}...`);
+    },
+    onError: (err) => {
+      toast.error('Call failed', getErrorMessage(err));
+    },
   });
 
   const groups = useMemo(() => {
@@ -37,6 +67,8 @@ export const ModernFollowups: React.FC = () => {
         .sort((a, b2) => new Date(a.scheduled_at).getTime() - new Date(b2.scheduled_at).getTime());
     return { overdue: by('overdue'), today: by('today'), upcoming: by('upcoming'), done: done.length, open: open.length };
   }, [followups]);
+
+  const dueCount = groups.overdue.length + groups.today.length;
 
   const stats = [
     { label: 'Open Follow-ups', value: groups.open.toLocaleString('en-IN'), icon: ListChecks, iconClass: 'bg-[#F2F4F7] text-[#344054]', subtext: 'waiting to be called' },
@@ -69,13 +101,29 @@ export const ModernFollowups: React.FC = () => {
                   {new Date(f.scheduled_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
                 </span>
                 <Pill tone={tone}>{title}</Pill>
-                <button
-                  type="button"
-                  onClick={() => completeMutation.mutate(f.followup_id)}
-                  className="inline-flex items-center gap-1 h-8 px-3 rounded-full bg-[#E7F8EE] text-[#16A34A] text-xs font-bold hover:bg-[#D3F2DF] transition-colors shrink-0"
-                >
-                  <Check className="w-3.5 h-3.5" /> Done
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => callMutation.mutate(f.followup_id)}
+                    disabled={callMutation.isPending && callMutation.variables === f.followup_id}
+                    title="Call Now"
+                    aria-label="Call Now"
+                    className="w-8 h-8 rounded-full bg-orange-600 hover:bg-orange-500 text-white flex items-center justify-center transition-all shadow-sm active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    {callMutation.isPending && callMutation.variables === f.followup_id ? (
+                      <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <PhoneCall className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => completeMutation.mutate(f.followup_id)}
+                    className="inline-flex items-center gap-1 h-8 px-3 rounded-full bg-[#E7F8EE] text-[#16A34A] text-xs font-bold hover:bg-[#D3F2DF] transition-colors cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" /> Done
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -86,10 +134,21 @@ export const ModernFollowups: React.FC = () => {
 
   return (
     <div>
-      <MPageHeader
-        title="Follow-ups"
-        subtitle="Callbacks your agents promised — grouped by what needs attention first."
-      />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <MPageHeader
+          title="Follow-ups"
+          subtitle="Callbacks your agents promised — grouped by what needs attention first."
+        />
+        <button
+          type="button"
+          onClick={() => dispatchMutation.mutate()}
+          disabled={dispatchMutation.isPending}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs shadow-md transition-all active:scale-95 cursor-pointer disabled:opacity-50 self-start sm:self-auto"
+        >
+          <PhoneCall className="w-4 h-4" />
+          <span>Start Follow-up Calls ({dueCount} Due)</span>
+        </button>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
         {stats.map((st, i) => (

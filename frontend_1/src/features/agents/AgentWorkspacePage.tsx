@@ -182,7 +182,16 @@ export const AgentWorkspacePage: React.FC = () => {
     {
       key: 'state',
       header: 'State',
-      render: (call) => <CallStateBadge state={call.state} size="xs" />,
+      render: (call) => (
+        <div className="flex flex-col gap-0.5">
+          <CallStateBadge state={call.state} size="xs" />
+          {call.state === 'FAILED' && (call as any).termination_reason && (
+            <span className="text-[10px] text-rose-500 font-medium leading-tight">
+              {(call as any).termination_reason}
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       key: 'duration',

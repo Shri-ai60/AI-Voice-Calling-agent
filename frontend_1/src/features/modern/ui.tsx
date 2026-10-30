@@ -14,8 +14,8 @@ export const MCard: React.FC<{ className?: string; children: React.ReactNode }> 
 }) => (
   <div
     className={clsx(
-      'bg-white border border-[#E8EAED] rounded-[24px]',
-      'shadow-[0_1px_2px_rgba(16,24,40,0.05),0_16px_40px_-28px_rgba(16,24,40,0.22)]',
+      'bg-white dark:bg-[#12141a]/90 dark:backdrop-blur-xl border border-[#E8EAED] dark:border-white/[0.08] rounded-[24px]',
+      'shadow-[0_1px_2px_rgba(16,24,40,0.05),0_16px_40px_-28px_rgba(16,24,40,0.22)] dark:shadow-[0_8px_32px_rgba(0,0,0,0.4)]',
       className
     )}
   >
@@ -37,33 +37,33 @@ export const MStatCard: React.FC<{
   deltaCaption?: string;
   subtext?: string;
   delay?: number;
-}> = ({ label, value, icon: Icon, iconClass = 'bg-[#F2F4F7] text-[#344054]', deltaPct, deltaCaption = 'vs previous 7 days', subtext, delay = 0 }) => (
+}> = ({ label, value, icon: Icon, iconClass = 'bg-[#F2F4F7] dark:bg-white/[0.06] text-[#344054] dark:text-neutral-300', deltaPct, deltaCaption = 'vs previous 7 days', subtext, delay = 0 }) => (
   <MCard className="p-[22px]">
     <div className="anim-enter" style={{ animationDelay: `${delay}ms` }}>
       <div className="flex items-center gap-3">
         <span className={clsx('w-11 h-11 rounded-full flex items-center justify-center shrink-0', iconClass)}>
           <Icon className="w-5 h-5" strokeWidth={1.9} />
         </span>
-        <p className="text-[15px] font-semibold text-[#101828] flex-1 leading-snug">{label}</p>
-        <Info className="w-[18px] h-[18px] text-[#C4CBD4] shrink-0" />
+        <p className="text-[15px] font-semibold text-[#101828] dark:text-white flex-1 leading-snug">{label}</p>
+        <Info className="w-[18px] h-[18px] text-[#C4CBD4] dark:text-neutral-500 shrink-0" />
       </div>
-      <p className="text-[34px] leading-none font-extrabold tracking-tight text-[#101828] mt-4 tabular-nums">{value}</p>
+      <p className="text-[34px] leading-none font-extrabold tracking-tight text-[#101828] dark:text-white mt-4 tabular-nums">{value}</p>
       <div className="flex items-center gap-2 mt-3.5 min-h-[22px]">
         {deltaPct !== undefined && deltaPct !== null && isFinite(deltaPct) ? (
           <>
             <span
               className={clsx(
                 'inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-bold',
-                deltaPct >= 0 ? 'bg-[#E7F8EE] text-[#16A34A]' : 'bg-[#FDECEC] text-[#DC2626]'
+                deltaPct >= 0 ? 'bg-[#E7F8EE] dark:bg-emerald-500/15 text-[#16A34A] dark:text-emerald-400' : 'bg-[#FDECEC] dark:bg-rose-500/15 text-[#DC2626] dark:text-rose-400'
               )}
             >
               {deltaPct >= 0 ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
               {Math.abs(deltaPct).toFixed(0)}%
             </span>
-            <span className="text-[13px] text-[#98A2B3]">{deltaCaption}</span>
+            <span className="text-[13px] text-[#98A2B3] dark:text-neutral-400">{deltaCaption}</span>
           </>
         ) : (
-          <span className="text-[13px] text-[#98A2B3]">{subtext || ''}</span>
+          <span className="text-[13px] text-[#98A2B3] dark:text-neutral-400">{subtext || ''}</span>
         )}
       </div>
     </div>
@@ -77,8 +77,8 @@ export const MPageHeader: React.FC<{
 }> = ({ title, subtitle, actions }) => (
   <div className="flex flex-wrap items-end justify-between gap-4 mb-6 anim-enter">
     <div>
-      <h1 className="text-[26px] leading-tight font-bold tracking-tight text-[#101828]">{title}</h1>
-      {subtitle && <p className="text-sm text-[#667085] mt-1">{subtitle}</p>}
+      <h1 className="text-[26px] leading-tight font-bold tracking-tight text-[#101828] dark:text-white">{title}</h1>
+      {subtitle && <p className="text-sm text-[#667085] dark:text-neutral-400 mt-1">{subtitle}</p>}
     </div>
     {actions && <div className="flex items-center gap-2.5 flex-wrap">{actions}</div>}
   </div>
@@ -87,7 +87,7 @@ export const MPageHeader: React.FC<{
 export const primaryPill =
   'inline-flex items-center gap-2 h-10 px-5 rounded-full bg-[#101828] text-white text-[13px] font-semibold shadow-[0_1px_2px_rgba(16,24,40,0.25)] hover:bg-[#1D2939] transition-all active:scale-[0.98]';
 export const whitePill =
-  'inline-flex items-center gap-2 h-10 px-5 rounded-full bg-white border border-[#E4E7EC] text-[#344054] text-[13px] font-semibold shadow-[0_1px_2px_rgba(16,24,40,0.05)] hover:bg-[#F9FAFB] transition-all active:scale-[0.98]';
+  'inline-flex items-center gap-2 h-10 px-5 rounded-full bg-white dark:bg-white/[0.06] border border-[#E4E7EC] dark:border-white/[0.1] text-[#344054] dark:text-white text-[13px] font-semibold shadow-[0_1px_2px_rgba(16,24,40,0.05)] hover:bg-[#F9FAFB] dark:hover:bg-white/[0.1] transition-all active:scale-[0.98]';
 
 const AVATAR_BG = [
   'bg-orange-100 text-orange-700',
@@ -125,12 +125,12 @@ export const Avatar: React.FC<{ name?: string | null; className?: string }> = ({
 
 type Tone = 'emerald' | 'rose' | 'amber' | 'sky' | 'slate' | 'violet';
 const TONES: Record<Tone, string> = {
-  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200/70',
-  rose: 'bg-rose-50 text-rose-700 border-rose-200/70',
-  amber: 'bg-amber-50 text-amber-700 border-amber-200/70',
-  sky: 'bg-sky-50 text-sky-700 border-sky-200/70',
-  slate: 'bg-slate-100 text-slate-600 border-slate-200',
-  violet: 'bg-violet-50 text-violet-700 border-violet-200/70',
+  emerald: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200/70 dark:border-emerald-500/20',
+  rose: 'bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-200/70 dark:border-rose-500/20',
+  amber: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200/70 dark:border-amber-500/20',
+  sky: 'bg-sky-50 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-200/70 dark:border-sky-500/20',
+  slate: 'bg-slate-100 dark:bg-white/[0.06] text-slate-600 dark:text-neutral-300 border-slate-200 dark:border-white/[0.1]',
+  violet: 'bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 border-violet-200/70 dark:border-violet-500/20',
 };
 
 export const Pill: React.FC<{ tone?: Tone; children: React.ReactNode; className?: string }> = ({
@@ -226,7 +226,7 @@ export function timeAgo(iso?: string | null): string {
 
 export const MEmpty: React.FC<{ title: string; text?: string }> = ({ title, text }) => (
   <div className="py-12 text-center">
-    <p className="text-sm font-semibold text-[#344054]">{title}</p>
-    {text && <p className="text-[13px] text-[#98A2B3] mt-1">{text}</p>}
+    <p className="text-sm font-semibold text-[#344054] dark:text-neutral-300">{title}</p>
+    {text && <p className="text-[13px] text-[#98A2B3] dark:text-neutral-400 mt-1">{text}</p>}
   </div>
 );

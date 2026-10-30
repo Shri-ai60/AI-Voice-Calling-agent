@@ -21,7 +21,7 @@ import {
   Download,
   Plus,
   ArrowRight,
-  Megaphone,
+  CalendarClock,
   BarChart3,
   Building2,
 } from 'lucide-react';
@@ -169,8 +169,8 @@ export const ModernDashboard: React.FC = () => {
           <button type="button" className={whitePill} onClick={() => leadsApi.downloadLeadsExcel().catch(() => {})}>
             <Download className="w-4 h-4" /> Export Leads
           </button>
-          <button type="button" className={primaryPill} onClick={() => navigate('/campaigns')}>
-            <Plus className="w-4 h-4" /> New Campaign
+<button type="button" className={primaryPill} onClick={() => navigate('/calls')}>
+            <PhoneCall className="w-4 h-4" /> View Calls
           </button>
         </div>
       </div>
@@ -337,7 +337,7 @@ export const ModernDashboard: React.FC = () => {
       {/* Quick actions */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
         {[
-          { title: 'Start a Campaign', text: 'Launch outbound calls to a contact list', icon: Megaphone, to: '/campaigns' },
+          { title: 'Start a Campaign', text: 'Launch outbound calls to a contact list', icon: CalendarClock, to: '/campaigns' },
           { title: 'Reports & Analytics', text: 'Deep-dive call and lead performance', icon: BarChart3, to: '/reports' },
           { title: 'Manage Businesses', text: 'Clients, agents and assignments', icon: Building2, to: '/businesses' },
         ].map((a, i) => (

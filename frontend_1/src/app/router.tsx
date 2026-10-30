@@ -13,7 +13,6 @@ import { AgentsPage } from '../features/agents/AgentsPage';
 import { AgentWorkspacePage } from '../features/agents/AgentWorkspacePage';
 import { QuestionnairesPage } from '../features/questionnaires/QuestionnairesPage';
 import { QuestionnaireEditorPage } from '../features/questionnaires/QuestionnaireEditorPage';
-import { CampaignsPage } from '../features/campaigns/CampaignsPage';
 import { ContactsPage } from '../features/contacts/ContactsPage';
 import { LeadsPage } from '../features/leads/LeadsPage';
 import { FollowupsPage } from '../features/followups/FollowupsPage';
@@ -29,7 +28,6 @@ import { ModernLeads } from '../features/modern/ModernLeads';
 import { ModernCalls } from '../features/modern/ModernCalls';
 import { ModernAgents } from '../features/modern/ModernAgents';
 import { ModernBusinesses } from '../features/modern/ModernBusinesses';
-import { ModernCampaigns } from '../features/modern/ModernCampaigns';
 import { ModernContacts } from '../features/modern/ModernContacts';
 import { ModernFollowups } from '../features/modern/ModernFollowups';
 import { ModernReports } from '../features/modern/ModernReports';
@@ -55,7 +53,7 @@ export const router = createBrowserRouter([
       { path: 'agents/:id', element: <AgentWorkspacePage /> },
       { path: 'questionnaires', element: <LookPage classic={<QuestionnairesPage />} modern={<ModernQuestionnaires />} /> },
       { path: 'questionnaires/:id', element: <QuestionnaireEditorPage /> },
-      { path: 'campaigns', element: <LookPage classic={<CampaignsPage />} modern={<ModernCampaigns />} /> },
+      { path: 'campaigns', element: <Navigate to="/calls" replace /> },
       { path: 'contacts', element: <LookPage classic={<ContactsPage />} modern={<ModernContacts />} /> },
       { path: 'leads', element: <LookPage classic={<LeadsPage />} modern={<ModernLeads />} /> },
       { path: 'followups', element: <LookPage classic={<FollowupsPage />} modern={<ModernFollowups />} /> },

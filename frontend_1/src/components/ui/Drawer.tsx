@@ -1,12 +1,13 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { clsx } from 'clsx';
 
 export interface DrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  title?: string;
-  subtitle?: string;
+  title?: React.ReactNode;
+  subtitle?: React.ReactNode;
   children: React.ReactNode;
   width?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
 }
@@ -19,6 +20,12 @@ export const Drawer: React.FC<DrawerProps> = ({
   children,
   width = 'lg',
 }) => {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
@@ -37,7 +44,7 @@ export const Drawer: React.FC<DrawerProps> = ({
     };
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
   const widthClasses = {
     sm: 'max-w-md',
@@ -47,33 +54,53 @@ export const Drawer: React.FC<DrawerProps> = ({
     '2xl': 'max-w-4xl',
   };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-hidden">
+  const drawerElement = (
+    <div className="fixed inset-0 z-[9999] overflow-hidden" role="dialog" aria-modal="true">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/75 backdrop-blur-md transition-opacity anim-fade"
+        className="fixed inset-0 bg-black/75 backdrop-blur-md transition-opacity anim-fade cursor-pointer"
         onClick={onClose}
+        aria-label="Close drawer backdrop"
       />
 
-      {/* Slide-over panel */}
-      <div className="fixed inset-y-0 right-0 pl-10 max-w-full flex">
+      {/* Slide-over panel container */}
+      <div className="fixed inset-y-0 right-0 pl-6 sm:pl-10 max-w-full flex pointer-events-none">
         <div
           className={clsx(
-            'app-overlay-panel anim-drawer-in w-screen bg-white/90 dark:bg-[var(--modal-glass-bg)] backdrop-blur-[20px] saturate-[140%] border-l border-slate-200/80 dark:border-white/[0.10] shadow-[0_24px_48px_rgba(0,0,0,0.5)] flex flex-col',
+            'pointer-events-auto app-overlay-panel anim-drawer-in w-screen bg-white/95 dark:bg-[#12141a]/95 backdrop-blur-[24px] saturate-[140%] border-l border-slate-200/80 dark:border-white/[0.10] shadow-[0_24px_48px_rgba(0,0,0,0.5)] flex flex-col h-full',
             widthClasses[width]
           )}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-white/[0.06] shrink-0">
-            <div>
-              {title && <h2 className="text-base font-semibold text-slate-900 dark:text-white">{title}</h2>}
-              {subtitle && <p className="text-xs text-slate-500 dark:text-neutral-400 mt-0.5">{subtitle}</p>}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200/80 dark:border-white/[0.08] shrink-0 bg-white/90 dark:bg-[#12141a]/95 backdrop-blur-md sticky top-0 z-20">
+            <div className="min-w-0 pr-4">
+              {title && (
+                typeof title === 'string' ? (
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white truncate">{title}</h2>
+                ) : (
+                  title
+                )
+              )}
+              {subtitle && (
+                typeof subtitle === 'string' ? (
+                  <p className="text-xs text-slate-500 dark:text-neutral-400 mt-0.5 font-mono truncate">{subtitle}</p>
+                ) : (
+                  subtitle
+                )
+              )}
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.08] transition-colors"
+              type="button"
+              aria-label="Close drawer"
+              title="Close drawer (Esc)"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-neutral-200 hover:text-slate-900 dark:hover:text-white bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] border border-slate-300 dark:border-white/[0.12] transition-all cursor-pointer shadow-sm active:scale-95 shrink-0"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
+              <span>Close</span>
+              <kbd className="hidden sm:inline-block text-[10px] px-1 py-0.2 rounded bg-white dark:bg-black/40 border border-slate-300 dark:border-white/20 text-slate-400 dark:text-neutral-400 font-mono">
+                Esc
+              </kbd>
             </button>
           </div>
 
@@ -83,4 +110,6 @@ export const Drawer: React.FC<DrawerProps> = ({
       </div>
     </div>
   );
+
+  return createPortal(drawerElement, document.body);
 };

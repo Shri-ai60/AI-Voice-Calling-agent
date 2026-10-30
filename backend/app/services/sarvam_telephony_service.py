@@ -450,7 +450,7 @@ class SarvamTelephonyService:
         websocket: WebSocket,
         stream_id: str,
         mulaw_bytes: bytes,
-        chunk_size: int = 320,  # 320 bytes = 40ms of 8kHz mu-law audio (telephony standard)
+        chunk_size: int = 640,  # 640 bytes = 80ms of 8kHz mu-law audio (smooth WAN streaming)
         on_chunk_sent: Optional[Callable[[bytes], None]] = None,
     ):
         """
@@ -467,7 +467,7 @@ class SarvamTelephonyService:
         logger.info(f"[SarvamTelephony] Streaming {total_len} bytes to VoBiz (streamId: {stream_id})...")
         try:
             # 1. Send initial pre-buffer (3 chunks = 120ms) immediately to absorb internet jitter
-            prebuffer_count = min(3, total_len // chunk_size)
+            prebuffer_count = min(5, total_len // chunk_size)
             for _ in range(prebuffer_count):
                 chunk = mulaw_bytes[offset : offset + chunk_size]
                 b64_payload = base64.b64encode(chunk).decode("ascii")
