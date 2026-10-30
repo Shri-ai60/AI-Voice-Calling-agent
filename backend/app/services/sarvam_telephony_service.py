@@ -72,7 +72,9 @@ class SarvamTelephonyService:
                     for t in tunnels:
                         public_url = t.get("public_url", "")
                         if public_url.startswith("https://"):
-                            return public_url.rstrip("/")
+                            self._cached_public_url = public_url.rstrip("/")
+                            self._cached_url_time = now
+                            return self._cached_public_url
         except Exception:
             pass
 
@@ -83,7 +85,9 @@ class SarvamTelephonyService:
             if tunnel_file.exists():
                 saved_url = tunnel_file.read_text(encoding="utf-8").strip()
                 if saved_url.startswith("https://"):
-                    return saved_url.rstrip("/")
+                    self._cached_public_url = saved_url.rstrip("/")
+                    self._cached_url_time = now
+                    return self._cached_public_url
         except Exception:
             pass
 
@@ -102,7 +106,9 @@ class SarvamTelephonyService:
         # 4. Check explicit BACKEND_PUBLIC_URL from environment / .env
         candidate = getattr(settings, "BACKEND_PUBLIC_URL", "").strip()
         if candidate and candidate.startswith("https://") and "localhost" not in candidate and "127.0.0.1" not in candidate:
-            return candidate.rstrip("/")
+            self._cached_public_url = candidate.rstrip("/")
+            self._cached_url_time = now
+            return self._cached_public_url
 
         return ""
 
@@ -1410,7 +1416,7 @@ class SarvamTelephonyService:
             logger.info(f"[SarvamTelephony] Finalizing call {call_id} (Duration: {call_duration}s, Audio events: {len(recorded_timeline)})")
 
             # 1. Build mixed WAV recording
-            wav_bytes = self._build_call_wav(recorded_timeline, call_duration)
+            wav_bytes = await asyncio.to_thread(self._build_call_wav, recorded_timeline, call_duration)
 
             # Check if genuine live audio was captured from customer
             customer_audio_events = [c for _, spk, c in recorded_timeline if spk == "customer" and c]
