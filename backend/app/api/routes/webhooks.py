@@ -120,7 +120,7 @@ async def receive_vobiz_call_status(
     if new_status in TERMINAL_STATES and not call.ended_at:
         call.ended_at = datetime.now(UTC)
 
-    if new_status in ("busy", "no_answer", "failed", "cancelled") and (call.phone_number or call.caller_number):
+    if new_status in ("busy", "no_answer", "failed", "cancelled") and (call.phone_number or getattr(call, "caller_number", None)):
         f_stmt = select(Followup).where(Followup.call_id == call.id)
         existing_f = (await db.execute(f_stmt)).scalar_one_or_none()
         if not existing_f:
@@ -139,7 +139,7 @@ async def receive_vobiz_call_status(
                 contact_id=call.contact_id,
                 agent_id=call.agent_id,
                 call_id=call.id,
-                phone_number=call.phone_number or call.caller_number,
+                phone_number=call.phone_number or getattr(call, "caller_number", None),
                 scheduled_at=datetime.now(UTC) + timedelta(minutes=delay),
                 status="pending",
                 notes=notes,

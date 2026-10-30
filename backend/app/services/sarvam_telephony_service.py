@@ -10,7 +10,7 @@ import time
 import uuid
 import wave
 from datetime import UTC, datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
@@ -52,6 +52,9 @@ class SarvamTelephonyService:
 
     def _get_public_url(self) -> str:
         """Returns the public HTTPS URL for webhooks (auto-detects from local ngrok API, tunnel file, or settings)."""
+        now = time.time()
+        if hasattr(self, "_cached_public_url") and self._cached_public_url and (now - getattr(self, "_cached_url_time", 0) < 600):
+            return self._cached_public_url
         # 1. Check local ngrok API
         try:
             with httpx.Client(timeout=2.5) as client:
@@ -63,7 +66,9 @@ class SarvamTelephonyService:
                         addr = str(t.get("config", {}).get("addr", ""))
                         public_url = t.get("public_url", "")
                         if backend_port_str in addr and public_url.startswith("https://"):
-                            return public_url.rstrip("/")
+                            self._cached_public_url = public_url.rstrip("/")
+                            self._cached_url_time = now
+                            return self._cached_public_url
                     for t in tunnels:
                         public_url = t.get("public_url", "")
                         if public_url.startswith("https://"):
@@ -190,7 +195,7 @@ class SarvamTelephonyService:
 
         xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Stream bidirectional="true" keepCallAlive="true" contentType="audio/x-mulaw;rate=8000">{stream_url}</Stream>
+    <Stream bidirectional="true" contentType="audio/x-mulaw;rate=8000">{stream_url}</Stream>
 </Response>"""
         return xml
 
@@ -217,6 +222,65 @@ class SarvamTelephonyService:
         return self.default_voice or "shubh"
 
     @staticmethod
+    def normalize_indic_transcript(text: str) -> str:
+        """
+        Normalizes Indic speech-to-text transcriptions, correcting common phonetic
+        misinterpretations of Marathi/Hindi numbers, acreages, and seed varieties.
+        """
+        if not text:
+            return ""
+        t = text
+        corrections = [
+            # Spoken Marathi/Hindi numbers + Acreage
+            ("सहायक कर", "६ एकर"),
+            ("सहा एकर", "६ एकर"),
+            ("सहा एकड़", "६ एकर"),
+            ("६ एकड़", "६ एकर"),
+            ("साथ ही सर", "७ एकर"),
+            ("सात एकर", "७ एकर"),
+            ("सात एकड़", "७ एकर"),
+            ("७ एकड़", "७ एकर"),
+            ("बात एक और", "५ एकर"),
+            ("पाच एकर", "५ एकर"),
+            ("पाच एकड़", "५ एकर"),
+            ("५ एकड़", "५ एकर"),
+            ("दोन एकर", "२ एकर"),
+            ("दो एकड़", "२ एकर"),
+            ("तीन एकर", "३ एकर"),
+            ("तीन एकड़", "३ एकर"),
+            ("चार एकर", "४ एकर"),
+            ("चार एकड़", "४ एकर"),
+            ("दहा एकर", "१० एकर"),
+            ("दस एकड़", "१० एकर"),
+            ("एका एकर", "१ एकर"),
+            ("एक एकर", "१ एकर"),
+            ("एक एकड़", "१ एकर"),
+            ("वीस किलो", "२० किलो"),
+            ("तीस किलो", "३० किलो"),
+            ("चाळीस किलो", "४० किलो"),
+            ("पन्नास किलो", "५० किलो"),
+            ("शंभर किलो", "१०० किलो"),
+            ("दोनशे किलो", "२०० किलो"),
+            # Crop & Variety phonetic slips
+            ("लोगों के बारे में", "लोकवन बद्दल"),
+            ("लोगों के बारे", "लोकवन बद्दल"),
+            ("लोकमन", "लोकवन"),
+            ("लोक वन", "लोकवन"),
+            ("दिग विजय", "दिग्विजय"),
+            # Questions asked by farmer
+            ("का है इसका", "याचे दर काय आहेत"),
+            ("का भाव आहे", "याचे दर काय आहेत"),
+            ("काय भाव आहे", "याचे दर काय आहेत"),
+            ("भाव काय", "दर काय आहेत"),
+            ("रेट काय", "दर काय आहेत"),
+            ("कोणता रिकमेंड", "कोणता प्रकार चांगला आहे"),
+            ("कौन सा रिकमेंड", "कोणता प्रकार चांगला आहे"),
+        ]
+        for src, target in corrections:
+            t = t.replace(src, target)
+        return t
+
+    @staticmethod
     def is_refusal_or_call_termination(text: str) -> bool:
         """
         Detects if the caller wants to end the call, refuses, or is not interested.
@@ -235,7 +299,7 @@ class SarvamTelephonyService:
             "बाद में बात", "बाद में करो", "अभी बिजी", "बिजी हूँ", "व्यस्त हूँ", "गलत नंबर", "रॉन्ग नंबर",
             "not interested", "no thanks", "don't call", "cut the call", "cut it", "hang up",
             "stop calling", "wrong number", "busy right now", "call later", "bye", "अलविदा",
-            "बंद करो", "रख दीजिए", "नही चाहिए", "काट दिजिये", "काट दीजिये", "काट",
+            "बंद करो", "रख दीजिए", "नही चाहिए", "काट दिजिये", "काट दीजिये",
             "नको", "नाही", "नको मला", "काही नको", "रुचि नहीं", "इंटरेस्ट नहीं", "नॉट इंटरेस्टेड",
             "nahi chahiye", "nahi lena", "nahi re", "nahi bhai", "no need", "not needed",
             "interest nahi", "nahi hai", "not really"
@@ -243,11 +307,13 @@ class SarvamTelephonyService:
         if any(k in t for k in refusal_keywords):
             return True
 
-        # Standalone negative response words
-        clean_words = [w.strip("।,?!.") for w in t.split()]
-        if any(w in [
-            "नहीं", "नही", "ना", "no", "nahi", "nahin", "nope", "not", "nako", "नाही", "नको"
-        ] for w in clean_words[:2]):
+        # Standalone negative response words: only trigger if utterance is strictly a short standalone refusal
+        clean_words = [w.strip("।,?!.") for w in t.split() if w.strip("।,?!.")]
+        if len(clean_words) == 1 and clean_words[0] in [
+            "नहीं", "नही", "ना", "no", "nahi", "nahin", "nope", "nako", "नाही"
+        ]:
+            return True
+        if len(clean_words) == 2 and clean_words[0] in ["नहीं", "नही", "ना", "no", "nahi", "nahin", "nope", "nako", "नाही"] and clean_words[1] in ["जी", "भाई", "सर", "thanks", "धन्यवाद", "sir", "madam", "re", "नको"]:
             return True
 
         return False
@@ -269,11 +335,7 @@ class SarvamTelephonyService:
 
         target_voice = self._normalize_sarvam_speaker(voice)
         target_lang = language_code
-        marathi_markers = [
-            "आहे", "नाही", "नको", "तुम्हाला", "आपल्याला", "माहिती", "प्रवेश", "करा", "हो",
-            "घ्या", "द्या", "सांगा", "करावे", "लागेल", "आहात", "विचार", "खरेदी", "नियोजन",
-            "पाहिजे", "करायचे", "आहेत", "कशा", "कशी", "काय", "होय", "कडुन", "कडून", "हवे", "घेऊ"
-        ]
+        marathi_markers = ["आहे", "नाही", "नको", "तुम्हाला", "बियाणे", "सांगा", "होय", "कडुन", "कडून", "हवे", "विचार", "खरेदी", "नियोजन", "गहू", "हरभरा", "एकर", "पाहिजे"]
         if any(m in clean_text for m in marathi_markers):
             target_lang = "mr-IN"
         elif any(h in clean_text for h in ["है", "हूँ", "बताइए", "नमस्ते", "धन्यवाद", "गेहूँ", "चना"]):
@@ -323,15 +385,14 @@ class SarvamTelephonyService:
     async def transcribe_audio(
         self,
         mulaw_bytes: bytes,
-        language_code: str = "unknown",
-    ) -> Tuple[str, str]:
+        language_code: str = "hi-IN",
+    ) -> str:
         """
         Converts accumulated 8kHz mu-law bytes to a 16-bit PCM WAV in memory
         and calls Sarvam AI Saaras STT for transcription via persistent client.
-        Returns (transcript, detected_language_code).
         """
         if len(mulaw_bytes) < 1200:
-            return "", language_code
+            return ""
 
         pcm_bytes = audioop.ulaw2lin(mulaw_bytes, 2)
         wav_buf = io.BytesIO()
@@ -347,7 +408,7 @@ class SarvamTelephonyService:
         files = {"file": ("caller_audio.wav", wav_data, "audio/wav")}
         data = {
             "model": self.stt_model,
-            "language_code": language_code or "unknown",
+            "language_code": language_code,
         }
 
         try:
@@ -355,15 +416,14 @@ class SarvamTelephonyService:
             resp = await client.post(url, headers=headers, files=files, data=data)
             if resp.status_code != 200:
                 logger.warning(f"[SarvamTelephony] STT failed ({resp.status_code}): {resp.text}")
-                return "", language_code
+                return ""
 
             result = resp.json()
             transcript = result.get("transcript", "").strip()
-            detected_lang = result.get("language_code") or language_code or "hi-IN"
-            return transcript, detected_lang
+            return transcript
         except Exception as e:
             logger.error(f"[SarvamTelephony] STT error: {e}")
-            return "", language_code
+            return ""
 
     async def stream_llm_chunks(
         self,
@@ -414,7 +474,7 @@ class SarvamTelephonyService:
 
                             has_delimiter = any(d in delta_text for d in delimiters)
 
-                            if (has_delimiter and word_count >= 3) or "\n" in delta_text:
+                            if has_delimiter:
                                 sentence = "".join(current_chunk).strip()
                                 if sentence:
                                     yield sentence
@@ -450,74 +510,53 @@ class SarvamTelephonyService:
         websocket: WebSocket,
         stream_id: str,
         mulaw_bytes: bytes,
-        chunk_size: int = 640,  # 640 bytes = 80ms of 8kHz mu-law audio (smooth WAN streaming)
+        chunk_size: int = 640,  # 640 bytes = 80ms of 8kHz mu-law audio
         on_chunk_sent: Optional[Callable[[bytes], None]] = None,
     ):
         """
         Streams mu-law audio chunks into the VoBiz WebSocket using the official
-        Plivo/VoBiz 'playAudio' event structure with drift-compensated precision timing.
+        Plivo/VoBiz 'playAudio' event structure.
         """
         if not mulaw_bytes or not stream_id:
             return
 
         total_len = len(mulaw_bytes)
-        offset = 0
-        chunk_duration = chunk_size / 8000.0  # 40ms per 320 bytes
+        prebuffer_chunks = 5  # Pre-send 400ms burst to prime carrier jitter buffer and eliminate underrun
+        start_monotonic = time.monotonic()
 
         logger.info(f"[SarvamTelephony] Streaming {total_len} bytes to VoBiz (streamId: {stream_id})...")
         try:
-            # 1. Send initial pre-buffer (3 chunks = 120ms) immediately to absorb internet jitter
-            prebuffer_count = min(5, total_len // chunk_size)
-            for _ in range(prebuffer_count):
-                chunk = mulaw_bytes[offset : offset + chunk_size]
-                b64_payload = base64.b64encode(chunk).decode("ascii")
-                msg = {
-                    "event": "playAudio",
-                    "streamId": stream_id,
-                    "media": {
-                        "contentType": "audio/x-mulaw",
-                        "sampleRate": 8000,
-                        "payload": b64_payload,
-                    },
-                }
-                await websocket.send_text(json.dumps(msg))
-                if on_chunk_sent:
-                    try:
-                        on_chunk_sent(chunk)
-                    except Exception:
-                        pass
-                offset += chunk_size
-
-            # 2. Stream remaining audio with drift-compensated precision clock pacing
-            start_time = time.perf_counter()
-            paced_index = 0
+            chunk_idx = 0
+            offset = 0
             while offset < total_len:
                 chunk = mulaw_bytes[offset : offset + chunk_size]
                 b64_payload = base64.b64encode(chunk).decode("ascii")
-                msg = {
-                    "event": "playAudio",
-                    "streamId": stream_id,
-                    "media": {
-                        "contentType": "audio/x-mulaw",
-                        "sampleRate": 8000,
-                        "payload": b64_payload,
-                    },
-                }
-                await websocket.send_text(json.dumps(msg))
+                msg_str = (
+                    f'{{"event":"playAudio","streamId":"{stream_id}",'
+                    f'"media":{{"contentType":"audio/x-mulaw","sampleRate":8000,"payload":"{b64_payload}"}}}}'
+                )
+                await websocket.send_text(msg_str)
                 if on_chunk_sent:
                     try:
                         on_chunk_sent(chunk)
                     except Exception:
                         pass
-                offset += chunk_size
-                paced_index += 1
 
-                # Drift-compensated clock pacing:
-                # Guarantees ultra-smooth, continuous audio without gaps or clicks
-                expected_time = start_time + (paced_index * chunk_duration)
-                sleep_time = expected_time - time.perf_counter()
-                if sleep_time > 0.002:
-                    await asyncio.sleep(sleep_time)
+                offset += chunk_size
+                chunk_idx += 1
+
+                # Burst first 400ms into carrier queue immediately
+                if chunk_idx < prebuffer_chunks:
+                    continue
+
+                # Drift-compensated monotonic pacing
+                chunk_dur = len(chunk) / 8000.0
+                target_elapsed = (chunk_idx - prebuffer_chunks + 1) * chunk_dur
+                actual_elapsed = time.monotonic() - start_monotonic
+                sleep_needed = target_elapsed - actual_elapsed
+
+                if sleep_needed > 0.005:
+                    await asyncio.sleep(sleep_needed)
 
             logger.info(f"[SarvamTelephony] Finished playing audio to VoBiz (streamId: {stream_id}).")
         except asyncio.CancelledError:
@@ -736,17 +775,27 @@ class SarvamTelephonyService:
                 else:
                     greeting = f"{greeting.rstrip('।,?!.')}। क्या आप हमारी सेवाओं में इंटरेस्टेड हैं?"
 
+        if "mr" in lang_code:
+            lang_rules = (
+                f"STRICT MARATHI LANGUAGE LOCK:\n"
+                f"- Speak ONLY in pure, polite, and respectful Marathi (मराठी) in Devanagari script.\n"
+                f"- NEVER switch to Hindi! Never use Hindi words like 'बहुत बढ़िया', 'क्या आप', 'बताइए', 'बीज', 'गेहूँ', 'चना', 'बुवाई', 'है', 'कीजिए'.\n"
+                f"- ALWAYS use proper Marathi: 'खूप छान', 'बियाणे', 'गहू आणि हरभरा', 'पेरणी', 'सांगा', 'आहे', 'तुम्हाला / आपल्याला', 'आपण'.\n"
+            )
+        else:
+            lang_rules = f"1. Spoken Language: Respond naturally in {lang_name} ({lang_code}). Never use English roman script for Indic languages or markdown.\n"
+
         system_prompt = (
             f"You are '{agent_name}', a helpful and polite AI Voice Calling Assistant representing '{comp_name}'.\n"
             f"Company / Purpose: {comp_desc}\n\n"
             f"INSTRUCTIONS & SCRIPT:\n{agent.instructions or agent.system_prompt or ''}\n\n"
             f"RULES FOR CONVERSATIONAL PHONE CALL:\n"
-            f"1. Spoken Language: Respond naturally in {lang_name} ({lang_code}). If customer speaks Marathi (मराठी), reply strictly in natural Marathi (mr-IN). If customer speaks Hindi, reply in Hindi. If English, reply in English. Never use English roman script for Indic languages or markdown.\n"
+            f"{lang_rules}"
             f"2. Strict 1 Short Sentence: Keep replies strictly under 15 words total. Never give long speeches.\n"
-            f"3. PROGRESSION ONLY - NEVER REPEAT: Never repeat a question you already asked. If customer confirmed interest, proceed directly to details.\n"
-            f"4. If customer says 'हाँ' / 'होय' / 'हो' / 'yes' / 'बताइए' / agrees: Say: '{interest_followup}'\n"
-            f"5. If customer says 'नहीं' / 'नाही' / 'नको' / 'no' / 'not interested' / declines: Say ONLY '{farewell_reply}' and stop.\n"
-            f"6. Concluding: If customer says 'ठीक है' / 'धन्यवाद' or 'thank you', say '{farewell_reply}'."
+            f"3. PROGRESSION ONLY - NEVER REPEAT: Never repeat a question you already asked in this call. If customer gives a vague response like 'ठीक आहे' / 'ठीक है' / 'बघू', acknowledge it and move forward to the next step immediately. NEVER ask for the same detail twice!\n"
+            f"4. Callback Request: If customer says they are busy or want a callback ('नंतर फोन करा', 'बाद में कॉल करो', 'वेळ नाही', 'नंतर सांगा'): Say '{farewell_reply}' and do NOT ask any more questions.\n"
+            f"5. If customer declines or says no ('नाही', 'नहीं', 'नको', 'not interested'): Say ONLY '{farewell_reply}' and stop.\n"
+            f"6. Concluding: If customer says 'ठीक आहे', 'ठीक है', or 'thank you', say '{farewell_reply}'."
         )
 
         conversation_history: List[Dict[str, str]] = []
@@ -772,81 +821,124 @@ class SarvamTelephonyService:
         current_turn_task: Optional[asyncio.Task] = None
         is_agent_speaking = False
         agent_finished_speaking_time = 0.0
-        call_ended_by_agent = False
-
-        playback_lock = asyncio.Lock()
-        active_playback_task: Optional[asyncio.Task] = None
 
         audio_buffer = bytearray()
         is_user_speaking = False
         caller_turn_start_time = 0.0
         last_speech_time = 0.0
-        barge_in_streak = 0
         energy_threshold = 300  # RMS threshold for caller voice activity detection
         sequence_counter = 1
 
+        # Active conversation context tracker (remembers stated acreage, crop, timing, etc.)
+        context_state = {
+            "crop": None,
+            "timing": None,
+            "acreage": None,
+            "quantity": None,
+            "variety": None,
+        }
+        dialogue_step = 0
+
         recorded_timeline: List[tuple] = []
 
-        async def cancel_and_clear_playback():
-            nonlocal active_playback_task, is_agent_speaking, agent_finished_speaking_time
-            try:
-                if active_playback_task and not active_playback_task.done():
-                    logger.info(f"[SarvamTelephony] Cancelling active playback for stream {stream_id}")
-                    active_playback_task.cancel()
-                    active_playback_task = None
-                if stream_id:
-                    try:
-                        await self.stop_playback_and_clear(websocket, stream_id)
-                    except Exception:
-                        pass
-                is_agent_speaking = False
-                agent_finished_speaking_time = time.time()
-            except BaseException as e:
-                logger.debug(f"[SarvamTelephony] cancel_and_clear_playback notice: {e}")
+        barge_in_streak = 0
+        agent_speech_started_time = 0.0
 
         async def play_audio_task(mulaw_data: bytes):
-            nonlocal is_agent_speaking, agent_finished_speaking_time, active_playback_task
-            if not mulaw_data:
+            nonlocal is_agent_speaking, agent_finished_speaking_time, agent_speech_started_time
+            is_agent_speaking = True
+            agent_speech_started_time = time.time()
+
+            def on_chunk(chunk: bytes):
+                recorded_timeline.append((time.time() - call_start_time, "agent", chunk))
+
+            try:
+                await self.stream_audio_to_vobiz(
+                    websocket,
+                    stream_id or call_id,
+                    mulaw_data,
+                    on_chunk_sent=on_chunk,
+                )
+            finally:
+                is_agent_speaking = False
+                agent_finished_speaking_time = time.time()
+
+        async def deliver_greeting():
+            nonlocal greeting_delivered, greeting_started_time, sequence_counter
+            if greeting_delivered:
                 return
-
-            async with playback_lock:
-                current_task = asyncio.current_task()
-                active_playback_task = current_task
-                is_agent_speaking = True
-
-                def on_chunk(chunk: bytes):
-                    recorded_timeline.append((time.time() - call_start_time, "agent", chunk))
-
-                try:
-                    await self.stream_audio_to_vobiz(
-                        websocket,
-                        stream_id or call_id,
-                        mulaw_data,
-                        on_chunk_sent=on_chunk,
+            greeting_delivered = True
+            greeting_started_time = time.time()
+            logger.info(f"[SarvamTelephony] Delivering opening greeting immediately on call connect: '{greeting}'")
+            conversation_history.append({"role": "assistant", "content": greeting})
+            async with AsyncSessionLocal() as session:
+                stmt = select(Transcript).where(Transcript.call_id == call_id)
+                tr = (await session.execute(stmt)).scalar_one_or_none()
+                if tr:
+                    session.add(
+                        TranscriptSegment(
+                            transcript_id=tr.id,
+                            speaker="agent",
+                            text=greeting,
+                            start_time=round(greeting_started_time - call_start_time, 2),
+                            end_time=round(greeting_started_time + 3.0 - call_start_time, 2),
+                            sequence=sequence_counter,
+                            confidence=1.0,
+                        )
                     )
-                except asyncio.CancelledError:
-                    logger.info(f"[SarvamTelephony] Playback cleanly stopped (caller barge-in) for stream {stream_id}")
-                except Exception as e:
-                    logger.warning(f"[SarvamTelephony] Playback streaming error for stream {stream_id}: {e}")
-                finally:
-                    is_agent_speaking = False
-                    agent_finished_speaking_time = time.time()
-                    if active_playback_task == current_task:
-                        active_playback_task = None
+                    await session.commit()
+            sequence_counter += 1
+            if greeting_mulaw:
+                await play_audio_task(greeting_mulaw)
 
         async def process_caller_turn(user_audio_bytes: bytes, t_start: float, t_end: float):
-            nonlocal sequence_counter, is_agent_speaking, agent_finished_speaking_time, greeting_delivered, greeting_started_time, call_ended_by_agent
+            nonlocal sequence_counter, is_agent_speaking, agent_finished_speaking_time, greeting_delivered, greeting_started_time
             t_turn_start = time.time()
             logger.info(f"[SarvamTelephony] Caller finished turn ({len(user_audio_bytes)} bytes). Transcribing...")
-            user_text, turn_lang = await self.transcribe_audio(user_audio_bytes, language_code="unknown")
+            user_text = await self.transcribe_audio(user_audio_bytes)
             stt_duration_ms = round((time.time() - t_turn_start) * 1000)
 
             if not user_text or not user_text.strip():
                 logger.info("[SarvamTelephony] STT returned empty transcription.")
                 return
 
-            logger.info(f"[SarvamTelephony] Caller said ({turn_lang}): '{user_text}' (STT took {stt_duration_ms}ms)")
+            logger.info(f"[SarvamTelephony] Raw STT caller text: '{user_text}' (took {stt_duration_ms}ms)")
+            # 0. Phonetic & agricultural normalizer: accurately restores numbers and terms
+            user_text = self.normalize_indic_transcript(user_text)
+            logger.info(f"[SarvamTelephony] Normalized caller text: '{user_text}'")
             conversation_history.append({"role": "user", "content": user_text})
+
+            # Update context_state from caller speech
+            u_clean = user_text.lower()
+            if "गहू" in u_clean or "wheat" in u_clean:
+                context_state["crop"] = "गहू"
+            elif "हरभरा" in u_clean or "चना" in u_clean or "chana" in u_clean:
+                context_state["crop"] = "हरभरा"
+
+            if "आता" in u_clean or "now" in u_clean:
+                context_state["timing"] = "आता"
+            elif "नंतर" in u_clean or "later" in u_clean:
+                context_state["timing"] = "नंतर"
+
+            import re
+            acre_match = re.search(r"(\d+|एक|दोन|तीन|चार|पाच|सहा|सात|आठ|नऊ|दहा)\s*(?:एकर|एकड़)", user_text)
+            if acre_match:
+                context_state["acreage"] = acre_match.group(0)
+                logger.info(f"[SarvamTelephony] Saved context: Acreage = {context_state['acreage']}")
+
+            qty_match = re.search(r"(\d+|वीस|तीस|चाळीस|पन्नास|शंभर|दोनशे)\s*(?:किलो|बॅग)", user_text)
+            if qty_match:
+                context_state["quantity"] = qty_match.group(0)
+                logger.info(f"[SarvamTelephony] Saved context: Quantity = {context_state['quantity']}")
+
+            if "लोकवन" in user_text:
+                context_state["variety"] = "लोकवन"
+            elif "शरबती" in user_text:
+                context_state["variety"] = "शरबती"
+            elif "दिग्विजय" in user_text:
+                context_state["variety"] = "दिग्विजय"
+            elif "विजय" in user_text:
+                context_state["variety"] = "विजय"
 
             # Persist caller transcript segment in DB with accurate timestamps
             async with AsyncSessionLocal() as session:
@@ -867,9 +959,76 @@ class SarvamTelephonyService:
                     await session.commit()
             sequence_counter += 1
 
-            # Check if caller refused, declined, or requested call disconnection
-            if self.is_refusal_or_call_termination(user_text):
-                call_ended_by_agent = True
+            # 1. Check if caller requested a callback or is busy / postponing call
+            callback_keywords = [
+                "बाद में कॉल", "बाद में फोन", "नंतर फोन", "नंतर कॉल", "नंतर बोला", "नंतर सांगा",
+                "वेळ नाही", "टाइम नाही", "टाइम नही", "बाद में बात", "call later", "call me later",
+                "busy right now", "नंतर बोला ना", "नंतर करा", "बाद में करना", "कल कॉल", "उद्या फोन",
+                "उद्या करा", "नंतर सांगतो", "बाद में बताऊंगा"
+            ]
+            if greeting_delivered and any(k in user_text.lower() for k in callback_keywords):
+                logger.info(f"[SarvamTelephony] Caller requested callback / busy: '{user_text}'. Concluding with callback promise.")
+                if "mr" in lang_code:
+                    cb_farewell = "नक्कीच! आम्ही तुम्हाला नंतर सोयीच्या वेळी पुन्हा कॉल करू. वेळ दिल्याबद्दल खूप धन्यवाद, नमस्कार!"
+                elif "en" in lang_code:
+                    cb_farewell = "Sure! We will call you back at a convenient time. Thank you, have a great day!"
+                else:
+                    cb_farewell = "जी बिल्कुल! हम आपको बाद में सुविधानुसार कॉल करेंगे। समय देने के लिए बहुत धन्यवाद, नमस्कार!"
+
+                conversation_history.append({"role": "assistant", "content": cb_farewell})
+                cb_start = time.time()
+                cb_mulaw = await self.synthesize_speech(cb_farewell, voice=voice_id, language_code=lang_code)
+                if cb_mulaw:
+                    await play_audio_task(cb_mulaw)
+                    await asyncio.sleep(1.2)
+
+                # Persist callback farewell segment
+                async with AsyncSessionLocal() as session:
+                    stmt = select(Transcript).where(Transcript.call_id == call_id)
+                    tr = (await session.execute(stmt)).scalar_one_or_none()
+                    if tr:
+                        session.add(
+                            TranscriptSegment(
+                                transcript_id=tr.id,
+                                speaker="agent",
+                                text=cb_farewell,
+                                start_time=round(cb_start - call_start_time, 2),
+                                end_time=round(time.time() - call_start_time, 2),
+                                sequence=sequence_counter,
+                                confidence=1.0,
+                            )
+                        )
+                        await session.commit()
+                sequence_counter += 1
+
+                # Update call disposition as callback_requested
+                async with AsyncSessionLocal() as session:
+                    c = await session.get(Call, call_id)
+                    if c:
+                        c.disposition = "callback_requested"
+                        await session.commit()
+
+                # Terminate carrier call
+                try:
+                    from app.services.telephony_service import telephony_service
+                    uuid_to_hangup = carrier_call_uuid or stream_id
+                    if uuid_to_hangup:
+                        await telephony_service.hangup_live_telephony_call(
+                            call_uuid=uuid_to_hangup,
+                            auth_id=carrier_auth_id,
+                            auth_token=carrier_auth_token,
+                        )
+                except Exception as hangup_err:
+                    logger.warning(f"[SarvamTelephony] Carrier hangup error on callback: {hangup_err}")
+
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
+                return
+
+            # 2. Check if caller refused, declined, or requested call disconnection
+            if greeting_delivered and self.is_refusal_or_call_termination(user_text):
                 logger.info(f"[SarvamTelephony] Caller declined / said NO: '{user_text}'. Concluding and cutting call {call_id} immediately.")
                 conversation_history.append({"role": "assistant", "content": farewell_reply})
 
@@ -925,84 +1084,157 @@ class SarvamTelephonyService:
                     pass
                 return
 
-            # If opening greeting has not been delivered yet, deliver it NOW in response to caller's first speech!
+            # 3. If opening greeting has not been delivered yet, deliver it now
             if not greeting_delivered:
-                greeting_delivered = True
-                greeting_started_time = time.time()
-                logger.info(f"[SarvamTelephony] First user speech detected ('{user_text}'). Playing opening greeting instantly!")
-                if greeting_mulaw:
-                    await play_audio_task(greeting_mulaw)
-
-                # Persist greeting transcript segment
-                async with AsyncSessionLocal() as session:
-                    stmt = select(Transcript).where(Transcript.call_id == call_id)
-                    tr = (await session.execute(stmt)).scalar_one_or_none()
-                    if tr:
-                        session.add(
-                            TranscriptSegment(
-                                transcript_id=tr.id,
-                                speaker="agent",
-                                text=greeting,
-                                start_time=round(greeting_started_time - call_start_time, 2),
-                                end_time=round(time.time() - call_start_time, 2),
-                                sequence=sequence_counter,
-                                confidence=1.0,
-                            )
-                        )
-                        await session.commit()
-                sequence_counter += 1
-                conversation_history.append({"role": "assistant", "content": greeting})
+                await deliver_greeting()
                 return
 
-            # Pipelined Stream-and-Synthesize Queue:
-            # Producer task reads LLM sentences and pre-fetches TTS in the background.
-            # Consumer task plays audio seamlessly without dead-air gaps between sentences.
-            audio_queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
-            full_reply_chunks = []
-            first_audio_dispatched = False
+            # 4. Generate next turn via Structured Dialogue Engine & Context Memory
             agent_speech_start = time.time()
+            prev_agent_texts = [m["content"] for m in conversation_history if m.get("role") == "assistant"]
+            is_agri_agent = (getattr(agent, "id", "") == "agent-samruddhi-agritech") or ("samruddhi" in (getattr(agent, "name", "")).lower())
 
-            async def tts_producer():
-                try:
-                    async for sentence in self.stream_llm_chunks(conversation_history, system_prompt):
-                        clean_s = sentence.strip()
-                        if not clean_s:
-                            continue
-                        full_reply_chunks.append(clean_s)
-                        tts_lang = "mr-IN" if turn_lang == "mr-IN" or "mr" in lang_code else lang_code
-                        sentence_mulaw = await self.synthesize_speech(clean_s, voice=voice_id, language_code=tts_lang)
-                        if sentence_mulaw:
-                            await audio_queue.put(sentence_mulaw)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.error(f"[SarvamTelephony] TTS producer error: {e}")
-                finally:
-                    await audio_queue.put(None)
+            direct_reply = None
+            should_terminate_after_reply = False
+            t_clean = user_text.lower().strip("।,?!. ")
 
-            producer_task = asyncio.create_task(tts_producer())
+            # Handle Hello / Audio Check without repeating previous statements
+            if t_clean in ["हेलो", "हॅलो", "hello", "आवाज येतोय का", "ऐकू येतंय का"]:
+                if "mr" in lang_code:
+                    if dialogue_step <= 1:
+                        direct_reply = "हो, ऐकू येतंय! आपण बियाणे आता खरेदी करू इच्छिता की नंतर?"
+                    elif dialogue_step == 2:
+                        direct_reply = "हो, आवाज येतोय! आपण किती एकर जमिनीवर पेरणी करणार आहात?"
+                    elif dialogue_step == 3:
+                        direct_reply = "हो, ऐकू येतंय! आपल्याला साधारण किती किलो बियाणे हवे आहे किंवा दर जाणून घ्यायचे आहेत का?"
+                    else:
+                        direct_reply = "हो, ऐकू येतंय! अधिक माहिती आणि बुकिंगसाठी आमच्या प्रतिनिधीकडून कॉल हवा आहे का?"
+                else:
+                    direct_reply = "जी, आवाज़ आ रही है! बताएं मैं आपकी क्या सहायता कर सकता हूँ?"
 
-            try:
-                while True:
-                    sentence_mulaw = await audio_queue.get()
-                    if sentence_mulaw is None:
-                        break
-                    if not first_audio_dispatched:
-                        first_audio_dispatched = True
-                        total_latency = round((time.time() - t_turn_start) * 1000)
-                        logger.info(f"[SarvamTelephony] >> Ultra-fast Time To First Audio: {total_latency}ms! <<")
-                    await play_audio_task(sentence_mulaw)
-            except asyncio.CancelledError:
-                producer_task.cancel()
-                raise
-            finally:
-                if not producer_task.done():
-                    producer_task.cancel()
+            # Direct Farmer Q&A: Always answer farmer questions directly with verified facts
+            elif any(q in user_text for q in ["कोणता प्रकार", "कोणती व्हरायटी", "रिकमेंड", "चांगला आहे", "कोणता चांगला", "कोणता ठीक"]):
+                if "mr" in lang_code:
+                    followup = " आपण किती एकर जमिनीवर पेरणी करणार आहात?" if not context_state["acreage"] else " आपण किती किलो बियाणे घेणार आहात?"
+                    direct_reply = "उत्पादनासाठी गव्हामध्ये लोकवन आणि हरभऱ्यामध्ये दिग्विजय ही व्हरायटी सर्वोत्तम आहे!" + followup
+                else:
+                    direct_reply = "उपज के लिए गेहूँ में लोकवन और चने में दिग्विजय सबसे उत्तम किस्म है! आप कितने एकड़ के लिए सोच रहे हैं?"
 
-            full_reply = " ".join(full_reply_chunks).strip()
+            elif any(q in user_text for q in ["दर काय", "भाव काय", "किंमत काय", "काय भाव", "का भाव", "रेट काय", "किंमत"]):
+                if "mr" in lang_code:
+                    direct_reply = "प्रमाणित लोकवन गहू ४२ रुपये किलो आणि हरभरा ७८ रुपये किलो आहे. बुकिंगसाठी आमच्या टीमने आपल्याला कॉल करावा का?"
+                else:
+                    direct_reply = "प्रमाणित लोकवन गेहूँ ४२ रुपये किलो और चना ७८ रुपये किलो है। क्या बुकिंग के लिए हमारी टीम आपको कॉल करे?"
+
+            elif "लोकवन" in user_text and any(q in user_text for q in ["माहिती", "सांगा", "बद्दल", "फायदे"]):
+                if "mr" in lang_code:
+                    direct_reply = "लोकवन गव्हाची ओंबी मोठी भरते, दाणा टपोरा येतो आणि एकरी १८ ते २० क्विंटल उत्पादन मिळते! बुकिंग करायची आहे का?"
+                else:
+                    direct_reply = "लोकवन गेहूँ की बाली बड़ी और दाना चमकदार होता है, प्रति एकड़ १८ से २० क्विंटल पैदावार मिलती है!"
+
+            elif "शरबती" in user_text and any(q in user_text for q in ["माहिती", "सांगा", "बद्दल", "फायदे"]):
+                if "mr" in lang_code:
+                    direct_reply = "शरबती गहू खाण्यासाठी अत्यंत चवदार व मऊ चपातीसाठी प्रसिद्ध आहे आणि बाजारात चांगला भाव मिळतो!"
+                else:
+                    direct_reply = "शरबती गेहूँ खाने में स्वादिष्ट और मुलायम रोटियों के लिए जाना जाता है, मंडी में बढ़िया भाव मिलता है!"
+
+            # Deterministic Turn Progression for Samruddhi Agritech Agent
+            elif is_agri_agent and "mr" in lang_code:
+                if dialogue_step == 0:
+                    dialogue_step = 1
+                    direct_reply = "खूप छान! आपण बियाणे आता खरेदी करू इच्छिता की नंतर?"
+                elif dialogue_step == 1:
+                    dialogue_step = 2
+                    direct_reply = "काही हरकत नाही! आपण किती एकर जमिनीवर पेरणी करण्याचे ठरवले आहे?"
+                elif dialogue_step == 2:
+                    dialogue_step = 3
+                    prefix = f"{context_state['acreage']} साठी खूप छान! " if context_state['acreage'] else "काही हरकत नाही! "
+                    direct_reply = f"{prefix}साधारण किती किलो बियाणे हवे आहे किंवा दर जाणून घ्यायचे आहेत का?"
+                elif dialogue_step == 3:
+                    dialogue_step = 4
+                    direct_reply = "आमच्याकडे लोकवन गहू ४२ रुपये किलो आणि दिग्विजय हरभरा ७८ रुपये किलो आहे. बुकिंगसाठी आमच्या प्रतिनिधीकडून कॉल हवा आहे का?"
+                elif dialogue_step >= 4:
+                    dialogue_step = 5
+                    direct_reply = "नक्कीच! समृद्धी ॲग्रीटेक मध्ये संपर्क केल्याबद्दल खूप धन्यवाद, आपला दिवस शुभ जावो, नमस्कार!"
+                    should_terminate_after_reply = True
+
+            if direct_reply:
+                full_reply = direct_reply
+                logger.info(f"[SarvamTelephony] Dialogue Engine resolved: step={dialogue_step}, reply='{full_reply}'")
+            else:
+                dynamic_system_prompt = system_prompt
+                ctx_parts = []
+                if context_state["crop"]:
+                    ctx_parts.append(f"पिक: {context_state['crop']}")
+                if context_state["timing"]:
+                    ctx_parts.append(f"खरेदी वेळ: {context_state['timing']}")
+                if context_state["acreage"]:
+                    ctx_parts.append(f"जमीन: {context_state['acreage']} (ALREADY KNOWN - DO NOT ASK FOR ACREAGE AGAIN)")
+                if context_state["quantity"]:
+                    ctx_parts.append(f"प्रमाण: {context_state['quantity']} (ALREADY KNOWN - DO NOT ASK FOR QUANTITY AGAIN)")
+                if context_state["variety"]:
+                    ctx_parts.append(f"पसंतीची व्हरायटी: {context_state['variety']}")
+
+                if ctx_parts:
+                    dynamic_system_prompt += f"\n\n[CURRENT SAVED CALL CONTEXT: {' | '.join(ctx_parts)}]"
+
+                full_reply = await self.generate_llm_response(conversation_history, dynamic_system_prompt)
+
+            # Extra Safety: If acreage is known, never ask for acreage again
+            if context_state["acreage"] and any(w in full_reply for w in ["किती एकर", "कितने एकड़"]):
+                logger.info(f"[SarvamTelephony] Acreage {context_state['acreage']} already known. Suppressing duplicate question.")
+                if "mr" in lang_code:
+                    full_reply = f"{context_state['acreage']} साठी खूप छान! साधारण किती किलो बियाणे हवे आहे किंवा दर जाणून घ्यायचे आहेत का?"
+                else:
+                    full_reply = f"{context_state['acreage']} के लिए बहुत बढ़िया! लगभग कितने किलो बीज चाहिए या भाव जानना चाहेंगे?"
+
+            # Extra Safety: Exact duplicate reply suppression
+            if any(full_reply.strip("।,?!. ") == prev.strip("।,?!. ") for prev in prev_agent_texts[-3:]):
+                logger.info(f"[SarvamTelephony] Exact repeat detected in '{full_reply}'. Progressing turn.")
+                if "mr" in lang_code:
+                    full_reply = "नक्कीच! अधिक माहिती आणि बुकिंगसाठी आमच्या प्रतिनिधीकडून कॉल हवा आहे का?"
+                else:
+                    full_reply = "बिल्कुल! अधिक जानकारी और बुकिंग के लिए क्या हमारे प्रतिनिधि आपको कॉल करें?"
+
+            # Strict Marathi Language Guard: Prevent any Hindi dialect leak in Marathi calls
+            if "mr" in lang_code:
+                hindi_to_marathi = {
+                    "बहुत बढ़िया": "खूप छान",
+                    "बहुत बढीया": "खूप छान",
+                    "बीज": "बियाणे",
+                    "बीजों": "बियाण्यांचे",
+                    "गेहूँ": "गहू",
+                    "चने": "हरभरा",
+                    "चना": "हरभरा",
+                    "बुवाई": "पेरणी",
+                    "बताइए": "सांगा",
+                    "बताएं": "सांगा",
+                    "बता दीजिए": "सांगा",
+                    "करना चाहते हैं": "करू इच्छिता",
+                    "चाहेंगे": "इच्छिता",
+                    "कितने एकड़": "किती एकर",
+                    "कितने किलोग्राम": "किती किलो",
+                    "आवश्यकता होगी": "गरज असेल",
+                    "समय देने के लिए धन्यवाद": "वेळ दिल्याबद्दल धन्यवाद",
+                    "समय देने के लिए आपका बहुत धन्यवाद": "वेळ दिल्याबद्दल खूप धन्यवाद",
+                    "आपका दिन शुभ हो": "आपला दिवस शुभ जावो",
+                    "जी बिल्कुल": "नक्कीच",
+                    "कोई बात नहीं": "काही हरकत नाही",
+                }
+                for h_w, m_w in hindi_to_marathi.items():
+                    full_reply = full_reply.replace(h_w, m_w)
+
             if not full_reply:
-                full_reply = "जी, बताइए मैं आपकी कैसे सहायता कर सकता हूँ?"
+                full_reply = "सांगा, मी आपली काय मदत करू शकतो?" if "mr" in lang_code else "जी, बताइए मैं आपकी कैसे सहायता कर सकता हूँ?"
+
             logger.info(f"[SarvamTelephony] Full agent response: '{full_reply}'")
+
+            # Synthesize and stream audio
+            reply_mulaw = await self.synthesize_speech(full_reply, voice=voice_id, language_code=lang_code)
+            if reply_mulaw:
+                total_latency = round((time.time() - t_turn_start) * 1000)
+                logger.info(f"[SarvamTelephony] >> Ultra-fast Time To First Audio: {total_latency}ms! <<")
+                await play_audio_task(reply_mulaw)
             conversation_history.append({"role": "assistant", "content": full_reply})
 
             # Persist assistant transcript segment
@@ -1029,7 +1261,6 @@ class SarvamTelephonyService:
             if any(w in full_reply for w in closing_phrases):
                 user_is_closing = any(w in user_text.lower() for w in ["ठीक", "अच्छा", "ok", "okay", "नहीं", "bye", "रखो", "काटो", "नो", "no", "ना", "धन्यवाद", "थैंक यू"])
                 if user_is_closing or "शुभ हो" in full_reply or "समय देने के लिए" in full_reply:
-                    call_ended_by_agent = True
                     logger.info("[SarvamTelephony] Natural conversational wrap-up concluded. Hanging up carrier call.")
                     await asyncio.sleep(1.0)
                     try:
@@ -1051,7 +1282,11 @@ class SarvamTelephonyService:
 
         try:
             while True:
-                msg_text = await websocket.receive_text()
+                try:
+                    msg_text = await asyncio.wait_for(websocket.receive_text(), timeout=6.0)
+                except asyncio.TimeoutError:
+                    logger.info(f"[SarvamTelephony] Inactivity watchdog: zero audio received for 6.0s on call {call_id} (caller disconnected). Concluding call.")
+                    break
                 msg = json.loads(msg_text)
                 event = msg.get("event")
 
@@ -1064,48 +1299,18 @@ class SarvamTelephonyService:
                         or msg.get("streamId")
                         or call_id
                     )
-                    logger.info(f"[SarvamTelephony] VoBiz start event received. Captured streamId: {stream_id}.")
-
-                    # Promptly initiate opening greeting after 0.5s connection stabilization grace
-                    async def initial_greeting_launcher():
-                        nonlocal greeting_delivered, greeting_started_time, sequence_counter
-                        try:
-                            await asyncio.sleep(0.5)
-                            if not greeting_delivered and not is_user_speaking and len(audio_buffer) == 0:
-                                greeting_delivered = True
-                                greeting_started_time = time.time()
-                                logger.info(f"[SarvamTelephony] Delivering initial greeting to streamId: {stream_id}")
-                                conversation_history.append({"role": "assistant", "content": greeting})
-                                await play_audio_task(greeting_mulaw)
-                                async with AsyncSessionLocal() as session:
-                                    stmt = select(Transcript).where(Transcript.call_id == call_id)
-                                    tr = (await session.execute(stmt)).scalar_one_or_none()
-                                    if tr:
-                                        session.add(
-                                            TranscriptSegment(
-                                                transcript_id=tr.id,
-                                                speaker="agent",
-                                                text=greeting,
-                                                start_time=round(greeting_started_time - call_start_time, 2),
-                                                end_time=round(time.time() - call_start_time, 2),
-                                                sequence=sequence_counter,
-                                                confidence=1.0,
-                                            )
-                                        )
-                                        await session.commit()
-                                sequence_counter += 1
-                        except asyncio.CancelledError:
-                            logger.info(f"[SarvamTelephony] Initial greeting launcher cleanly cancelled (caller spoke first) for stream {stream_id}")
-                        except Exception as e:
-                            logger.warning(f"[SarvamTelephony] Initial greeting launcher error: {e}")
-
-                    current_turn_task = asyncio.create_task(initial_greeting_launcher())
+                    logger.info(f"[SarvamTelephony] VoBiz start event received for streamId: {stream_id}. Triggering opening greeting instantly!")
+                    if not greeting_delivered:
+                        current_turn_task = asyncio.create_task(deliver_greeting())
 
                 elif event == "media":
                     now = time.time()
-                    # Capture streamId if not captured yet
                     if not stream_id:
                         stream_id = msg.get("streamId") or msg.get("media", {}).get("streamId") or call_id
+
+                    # Safeguard: If start event had no streamId or was missed, deliver greeting on first audio packet
+                    if not greeting_delivered and not is_agent_speaking:
+                        current_turn_task = asyncio.create_task(deliver_greeting())
 
                     media_payload = msg.get("media", {}).get("payload", "")
                     if not media_payload:
@@ -1116,29 +1321,35 @@ class SarvamTelephonyService:
                     rms = audioop.rms(pcm_chunk, 2)
                     recorded_timeline.append((now - call_start_time, "customer", chunk))
 
-                    # 1. Caller Barge-In: If agent is speaking and caller speaks naturally (RMS > 550)
+                    # 1. Caller Barge-In with Acoustic Echo Immunity:
+                    # Protect agent from self-interrupting on phone speakerphone echo.
+                    # First 1.5s of any agent utterance is completely immune to barge-in.
+                    # Afterward, require genuine loud caller speech (RMS > 1600 for >= 6 chunks = 120ms).
                     if is_agent_speaking:
-                        if rms > 550:
+                        time_since_speech_started = now - agent_speech_started_time
+                        if time_since_speech_started > 1.5 and rms > 1600:
                             barge_in_streak += 1
-                            if barge_in_streak >= 2:  # Must sustain for at least 2 consecutive frames (~40ms) to filter out clicks
-                                logger.info(f"[SarvamTelephony] Caller interrupted agent! (RMS: {rms}, streak: {barge_in_streak}). Clearing playback buffer.")
+                            if barge_in_streak >= 6:
+                                logger.info(f"[SarvamTelephony] Caller interrupted agent (RMS: {rms}, streak: {barge_in_streak}). Clearing playback buffer.")
                                 if current_turn_task and not current_turn_task.done():
                                     current_turn_task.cancel()
-                                await cancel_and_clear_playback()
+                                await self.stop_playback_and_clear(websocket, stream_id)
+                                is_agent_speaking = False
+                                agent_finished_speaking_time = now
+                                barge_in_streak = 0
                                 is_user_speaking = True
                                 caller_turn_start_time = now
                                 audio_buffer.clear()
                                 audio_buffer.extend(chunk)
                                 last_speech_time = now
-                                barge_in_streak = 0
                         else:
                             barge_in_streak = 0
                         continue
-                    else:
-                        barge_in_streak = 0
 
-                    # 2. Speakerphone / Network Echo Suppression Grace Window (400ms after agent stops)
-                    if (now - agent_finished_speaking_time < 0.40) and rms < 650:
+                    barge_in_streak = 0
+
+                    # 2. Speakerphone / Network Echo Suppression Grace Window (350ms after agent stops)
+                    if (now - agent_finished_speaking_time < 0.35) and rms < 650:
                         continue
 
                     # 3. Conversational Voice Activity Detection
@@ -1147,18 +1358,13 @@ class SarvamTelephonyService:
                             is_user_speaking = True
                             caller_turn_start_time = now
                             logger.debug(f"[SarvamTelephony] Caller started speaking (RMS: {rms})")
-                            # If agent response is thinking/generating before speech, cancel and prioritize caller
-                            if current_turn_task and not current_turn_task.done():
-                                current_turn_task.cancel()
-                            await cancel_and_clear_playback()
+                            # Note: Never cancel current_turn_task here! When agent is synthesizing
+                            # response, ambient noise or second syllables must NOT abort the response.
                         audio_buffer.extend(chunk)
                         last_speech_time = now
                     elif is_user_speaking:
                         audio_buffer.extend(chunk)
-                        # Adaptive silence threshold:
-                        # Give caller 1.15s if they just started (< 1.75s audio) so short pause after "हाँ/नमस्ते" isn't cut off.
-                        # For longer speech, 0.90s is the ideal conversational turn-completion boundary.
-                        silence_threshold = 1.15 if len(audio_buffer) < 14000 else 0.90
+                        silence_threshold = 0.95 if len(audio_buffer) < 16000 else 0.80
                         if now - last_speech_time > silence_threshold:
                             is_user_speaking = False
                             user_audio = bytes(audio_buffer)
@@ -1166,11 +1372,11 @@ class SarvamTelephonyService:
                             t_start = caller_turn_start_time
                             t_end = last_speech_time
 
-                            # Require at least 400ms (3200 bytes) of genuine speech to prevent triggering on background clicks
-                            if len(user_audio) < 3200:
+                            # Require at least 200ms (1600 bytes) of genuine speech to prevent triggering on background clicks
+                            if len(user_audio) < 1600:
                                 continue
 
-                            # Launch turn processing task asynchronously to keep WebSocket loop 100% unblocked!
+                            # Launch turn processing task asynchronously
                             current_turn_task = asyncio.create_task(
                                 process_caller_turn(user_audio, t_start, t_end)
                             )
@@ -1184,27 +1390,21 @@ class SarvamTelephonyService:
         except Exception as e:
             logger.error(f"[SarvamTelephony] WebSocket error during call {call_id}: {e}", exc_info=True)
         finally:
-            try:
-                if current_turn_task and not current_turn_task.done():
-                    current_turn_task.cancel()
-                await cancel_and_clear_playback()
-            except BaseException:
-                pass
+            if current_turn_task and not current_turn_task.done():
+                current_turn_task.cancel()
 
-            # ONLY perform active carrier hangup if the agent or user specifically concluded the conversation
-            if call_ended_by_agent:
-                try:
-                    from app.services.telephony_service import telephony_service
-                    uuid_to_hangup = carrier_call_uuid or stream_id
-                    if uuid_to_hangup:
-                        logger.info(f"[SarvamTelephony] Concluding carrier call {call_id} (uuid: {uuid_to_hangup})...")
-                        await telephony_service.hangup_live_telephony_call(
-                            call_uuid=uuid_to_hangup,
-                            auth_id=carrier_auth_id,
-                            auth_token=carrier_auth_token,
-                        )
-                except Exception as e:
-                    logger.debug(f"[SarvamTelephony] Carrier hangup notice: {e}")
+            # Safeguard: ensure live phone call is disconnected on carrier side
+            try:
+                from app.services.telephony_service import telephony_service
+                uuid_to_hangup = carrier_call_uuid or stream_id
+                if uuid_to_hangup:
+                    await telephony_service.hangup_live_telephony_call(
+                        call_uuid=uuid_to_hangup,
+                        auth_id=carrier_auth_id,
+                        auth_token=carrier_auth_token,
+                    )
+            except Exception as e:
+                logger.debug(f"[SarvamTelephony] Final carrier hangup safeguard note: {e}")
 
             call_duration = round(time.time() - call_start_time, 2)
             logger.info(f"[SarvamTelephony] Finalizing call {call_id} (Duration: {call_duration}s, Audio events: {len(recorded_timeline)})")
@@ -1271,7 +1471,11 @@ class SarvamTelephonyService:
                         rec.duration = call_duration
                         rec.status = "ready"
 
-                    await session.commit()
+                    try:
+                        await session.commit()
+                    except Exception as commit_err:
+                        await session.rollback()
+                        logger.debug(f"[SarvamTelephony] Recording commit race handled: {commit_err}")
 
                     # Export call artifacts directly to root data/ folder
                     try:
@@ -1295,6 +1499,67 @@ class SarvamTelephonyService:
                         ]
 
                         intel = await lead_intelligence_service.analyze_call(session, call, segments=segs)
+
+                        # Automatic Follow-up Call Scheduling
+                        try:
+                            from app.models.lead import Followup
+                            from app.services.callback_time import schedule_from_transcript
+                            
+                            f_info = intel.get("followup") if intel else None
+                            full_transcript = "\n".join(f"{s.get('speaker', 'speaker').title()}: {s.get('text', '')}" for s in segs)
+                            parsed_callback_time = schedule_from_transcript(full_transcript)
+                            
+                            requires_followup = False
+                            sched_time = parsed_callback_time
+                            reason_action = "Scheduled follow-up"
+                            matched_text = None
+                            
+                            if parsed_callback_time:
+                                requires_followup = True
+                                reason_action = f"Customer requested callback for {parsed_callback_time.strftime('%d %b %Y, %I:%M %p')}"
+                                matched_text = f_info.get("matched_utterance") if f_info else "Specific callback time requested"
+                            elif f_info and f_info.get("requires_followup"):
+                                requires_followup = True
+                                reason_action = f"{f_info.get('name')}: {f_info.get('action')}"
+                                matched_text = f_info.get("matched_utterance")
+                                sched_iso = f_info.get("suggested_scheduled_at")
+                                if sched_iso and not sched_time:
+                                    try:
+                                        sched_time = datetime.fromisoformat(sched_iso.replace("Z", "+00:00"))
+                                    except Exception:
+                                        pass
+                            elif (call.disposition or "").lower() == "callback_requested":
+                                requires_followup = True
+                                reason_action = "Customer requested callback during conversation"
+                                matched_text = "Callback requested"
+
+                            call_phone = call.phone_number or call.caller_number
+                            if requires_followup and call_phone:
+                                fu_stmt = select(Followup).where(Followup.call_id == call.id)
+                                existing_fu = (await session.execute(fu_stmt)).scalar_one_or_none()
+                                notes_txt = f"{reason_action}. (Matched: '{matched_text or 'callback'}')"
+                                target_time = sched_time or (datetime.now(UTC) + timedelta(hours=2))
+
+                                if not existing_fu:
+                                    new_fu = Followup(
+                                        tenant_id=call.tenant_id,
+                                        contact_id=call.contact_id,
+                                        agent_id=call.agent_id,
+                                        call_id=call.id,
+                                        phone_number=call_phone,
+                                        scheduled_at=target_time,
+                                        status="scheduled",
+                                        notes=notes_txt,
+                                    )
+                                    session.add(new_fu)
+                                    logger.info(f"[SarvamTelephony] Auto-scheduled Followup for call {call.id} at {target_time}")
+                                else:
+                                    existing_fu.scheduled_at = target_time
+                                    existing_fu.notes = notes_txt
+                                    existing_fu.status = "scheduled"
+                                call.disposition = "callback_requested"
+                        except Exception as fu_err:
+                            logger.warning(f"[SarvamTelephony] Auto-followup scheduling note: {fu_err}")
 
                         data_exporter.export_call_transcript(
                             call_id=call_id,

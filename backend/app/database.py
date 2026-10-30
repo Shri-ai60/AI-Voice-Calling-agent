@@ -2,6 +2,7 @@ from typing import AsyncGenerator
 from urllib.parse import quote_plus, unquote
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
+from sqlalchemy import event
 
 from app.config import settings
 
@@ -60,8 +61,11 @@ engine_kwargs = {
 }
 
 if _db_url.startswith("sqlite"):
-    # SQLite: check_same_thread not needed with async, but kept for safety
-    connect_args = {"check_same_thread": False}
+    # SQLite: check_same_thread not needed with async, 30s timeout to prevent locking
+    connect_args = {
+        "check_same_thread": False,
+        "timeout": 30.0,
+    }
     engine_kwargs["connect_args"] = connect_args
 elif _db_url.startswith("postgresql"):
     # PostgreSQL: configure connection pool
@@ -71,6 +75,15 @@ elif _db_url.startswith("postgresql"):
     engine_kwargs["pool_recycle"] = 300
 
 engine = create_async_engine(_db_url, **engine_kwargs)
+
+if _db_url.startswith("sqlite"):
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,

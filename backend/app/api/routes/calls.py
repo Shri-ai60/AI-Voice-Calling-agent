@@ -30,7 +30,8 @@ router = APIRouter(prefix="/calls", tags=["calls"], dependencies=[Depends(verify
 def map_call_to_document(c: Call) -> Dict[str, Any]:
     raw_st = (c.status or "initiating").lower()
     state_map = {
-        "initiating": "QUEUED",
+        "queued": "QUEUED",
+        "initiating": "DIALING",
         "ringing": "RINGING",
         "in_progress": "CONNECTED",
         "completed": "COMPLETED",
@@ -38,7 +39,7 @@ def map_call_to_document(c: Call) -> Dict[str, Any]:
         "no_answer": "NO_ANSWER",
         "failed": "FAILED",
     }
-    state = state_map.get(raw_st, "COMPLETED")
+    state = state_map.get(raw_st, raw_st.upper())
 
     # Load real segments from relation
     segments = []
@@ -71,6 +72,7 @@ def map_call_to_document(c: Call) -> Dict[str, Any]:
         "contact_id": c.contact_id,
         "phone_number": c.phone_number,
         "state": state,
+        "termination_reason": c.termination_reason,
         "duration": c.duration or 0.0,
         "provider": "vobiz",
         "created_at": c.created_at.isoformat() if c.created_at else datetime.now(UTC).isoformat(),
@@ -369,7 +371,10 @@ async def get_call_transcript(
         raise HTTPException(status_code=404, detail="Call not found")
 
     if not call.transcript or not call.transcript.segments:
-        await persist_post_call_artifacts(db, call)
+        try:
+            await persist_post_call_artifacts(db, call)
+        except Exception:
+            pass
         await db.commit()
         res = await db.execute(stmt)
         call = res.scalar_one_or_none()
@@ -423,8 +428,11 @@ async def get_call_recording(
         raise HTTPException(status_code=404, detail="Call not found")
 
     # If call does not have a recording in storage yet, persist/generate and upload
-    if not call.recording or not (await storage_service.exists(call.recording.storage_key)):
-        await persist_post_call_artifacts(db, call)
+    if (not call.recording or not (await storage_service.exists(call.recording.storage_key))) and (call.status in TERMINAL_STATES):
+        try:
+            await persist_post_call_artifacts(db, call)
+        except Exception:
+            pass
         await db.commit()
         res = await db.execute(stmt)
         call = res.scalar_one_or_none()
@@ -524,7 +532,10 @@ async def get_call_interest(
 
     # If transcript is missing, try syncing from Dograh first
     if not call.transcript or not call.transcript.segments:
-        await persist_post_call_artifacts(db, call)
+        try:
+            await persist_post_call_artifacts(db, call)
+        except Exception:
+            pass
         await db.commit()
         res = await db.execute(stmt)
         call = res.scalar_one_or_none()
@@ -558,7 +569,10 @@ async def get_call_followup(
         raise HTTPException(status_code=404, detail="Call not found")
 
     if not call.transcript or not call.transcript.segments:
-        await persist_post_call_artifacts(db, call)
+        try:
+            await persist_post_call_artifacts(db, call)
+        except Exception:
+            pass
         await db.commit()
         res = await db.execute(stmt)
         call = res.scalar_one_or_none()

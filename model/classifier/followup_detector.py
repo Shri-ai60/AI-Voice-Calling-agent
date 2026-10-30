@@ -278,7 +278,8 @@ class FollowupDetector:
         # e.g. "5 baje call karna", "shaam ko 6 baje", "kal 10 baje", "tomorrow at 5", "lunch ke baad", "2 ghante baad", "पाच वाजता फोन करा"
         self.p_cat8 = re.compile(
             r"(\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|ek|do|teen|char|paanch|chhe|saat|aath|nau|das)\s*(baje|pm|am|o'clock|ghante|hours?)\b|"
-            r"(\d{1,2}|एक|दोन|तीन|चार|पाच|सहा|सात|आठ|नऊ|दहा)\s*वाजता|"
+            r"(\d{1,2}|एक|दोन|तीन|चार|पाच|सहा|सात|आठ|नऊ|दहा|दस|ग्यारह|अकरा|बारा|बारह)\s*(वाजता|बजे)|"
+            r"(कल|उद्या|tomorrow)\s*(सुबह|सकाळी|दुपारी|दोपहर|संध्याकाळी|शाम)?\s*(\d{1,2}|एक|दोन|तीन|चार|पाच|सहा|सात|आठ|नऊ|दहा|दस|ग्यारह|अकरा|बारा|बारह)?\s*(वाजता|बजे)?|"
             r"\b(shaam\s*ko|subah|dopahar|evening|morning|afternoon|lunch\s*ke\s*baad)\s*(call|phone|baje|\d{1,2})|"
             r"(संध्याकाळी|सकाळी|दुपारी)\s*(फोन|कॉल|\d{1,2}\s*वाजता)|"
             r"\b(\d{1,2}\s*baje\s*(call|phone|karna)?)\b)",
@@ -289,7 +290,7 @@ class FollowupDetector:
         # e.g. "kal call karna", "kal phone karna", "call me tomorrow", "udya phone kara", "उद्या फोन करा"
         self.p_cat13 = re.compile(
             r"(\b(kal\s*(call|phone|baat|batao|karna|karo)|call\s*me\s*tomorrow|tomorrow\s*(call|morning|evening)?|udya\s*(phone|call|kara))\b|"
-            r"(उद्या\s*(फोन|कॉल|बोलूया)))",
+            r"(कल\s*(कॉल|फोन|बात|सुबह|शाम|करना|करो|कर\s*सकते|आना)|उद्या\s*(फोन|कॉल|बोलूया|करा|सकाळी)))",
             re.IGNORECASE
         )
 
@@ -339,7 +340,7 @@ class FollowupDetector:
         # e.g. "mujhe baad mein call karna", "aap baad mein call karo", "please call me later", "nantar call kara", "पुन्हा फोन करा"
         self.p_cat12 = re.compile(
             r"(\b(mujhe\s*baad\s*mein\s*call|aap\s*baad\s*mein\s*call|please\s*call\s*(me\s*)?later|nantar\s*call\s*kara)\b|"
-            r"(पुन्हा\s*फोन\s*करा|नंतर\s*परत\s*फोन))",
+            r"(पुन्हा\s*फोन\s*करा|नंतर\s*परत\s*फोन|बाद\s*में\s*(कॉल|फोन|करना|बात)|नंतर\s*(फोन|कॉल|करा|सांगा)|वेळ\s*नाही|टाइम\s*नाही))",
             re.IGNORECASE
         )
 
@@ -632,7 +633,16 @@ class FollowupDetector:
         cat_info = FOLLOWUP_CATEGORIES[cat_id]
         delay = cat_info.get("default_delay_minutes")
         scheduled_iso = None
-        if delay and cat_info.get("requires_followup"):
+        # Check exact customer requested callback moment
+        try:
+            from app.services.callback_time import schedule_from_transcript
+            desired_dt = schedule_from_transcript(full_text)
+            if desired_dt:
+                scheduled_iso = desired_dt.astimezone(UTC).isoformat()
+        except Exception:
+            pass
+
+        if not scheduled_iso and delay and cat_info.get("requires_followup"):
             scheduled_iso = (datetime.now(UTC) + timedelta(minutes=delay)).isoformat()
 
         return FollowupDetectionResult(

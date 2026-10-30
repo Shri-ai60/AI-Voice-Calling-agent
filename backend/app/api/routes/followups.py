@@ -3,12 +3,14 @@ import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import verify_app_client
 from app.models.lead import Followup
-from app.models.call import Call
+from app.models.call import Call, Transcript, TranscriptSegment
+from app.models.agent import Agent
 from app.schemas.lead import FollowupResponse, UpdateFollowupRequest
 
 logger = logging.getLogger(__name__)
@@ -35,18 +37,15 @@ def map_followup_to_response(f: Followup) -> FollowupResponse:
 
 async def sync_qualifying_calls_to_followups(db: AsyncSession):
     """
-    Evaluates all qualifying calls (busy, unanswered, failed, line busy, short disconnect)
-    and ensures each has a corresponding Followup record in PostgreSQL.
+    Evaluates qualifying calls:
+    Only calls where the customer explicitly requested a callback (callback_requested)
+    with exact time extracted from transcript are added to Scheduled Follow-ups.
+    (Carrier busy or unanswered attempts are not spammed into Scheduled Follow-ups).
     """
     try:
-        qualifying_statuses = ["busy", "line_busy", "no_answer", "unanswered", "failed", "cancelled"]
         stmt = (
             select(Call)
-            .where(
-                (Call.status.in_(qualifying_statuses))
-                | (Call.termination_reason.in_(qualifying_statuses))
-                | ((Call.duration != None) & (Call.duration < 5.0) & (Call.status.notin_(["initiating", "ringing", "in_progress"])))
-            )
+            .where(Call.disposition == "callback_requested")
             .order_by(Call.created_at.desc())
             .limit(100)
         )
@@ -67,25 +66,23 @@ async def sync_qualifying_calls_to_followups(db: AsyncSession):
             if call.id in existing_call_ids:
                 continue
 
-            call_phone = call.phone_number or call.caller_number
+            call_phone = call.phone_number or getattr(call, "caller_number", None)
             if not call_phone:
                 continue
 
-            st = (call.status or "").lower()
-            term = (call.termination_reason or "").lower()
-
-            if st in ("busy", "line_busy") or term in ("busy", "line_busy"):
-                sched = now + timedelta(minutes=30)
-                notes = "Category 2: PHONE / LINE BUSY. Status: busy. Action: Retry call after 30 minutes"
-            elif st in ("no_answer", "unanswered") or term in ("no_answer", "unanswered"):
-                sched = now + timedelta(minutes=60)
-                notes = "Category 3: CALL NOT ANSWERED / NO RESPONSE. Status: no_answer. Action: Retry call in 1 hour"
-            elif st in ("failed", "cancelled") or term in ("failed", "cancelled"):
-                sched = now + timedelta(minutes=45)
-                notes = f"Category 4: CALL DISCONNECTED WITHOUT CONVERSATION. Status: {call.status}. Action: Retry call in 45 minutes"
-            else:
-                sched = now + timedelta(minutes=60)
-                notes = "Category 3: CALL NOT ANSWERED / NO RESPONSE. Action: Retry call in 1 hour. (Matched: 'Short call / no conversation')"
+            from app.services.callback_time import schedule_from_transcript
+            tr_stmt = select(Transcript).options(selectinload(Transcript.segments)).where(Transcript.call_id == call.id)
+            tr_res = await db.execute(tr_stmt)
+            tr = tr_res.scalar_one_or_none()
+            tr_text = ""
+            if tr and tr.segments:
+                tr_text = "\n".join(f"{s.speaker}: {s.text}" for s in tr.segments)
+            
+            parsed_time = schedule_from_transcript(tr_text) if tr_text else None
+            sched = parsed_time or (now + timedelta(hours=2))
+            time_str = sched.strftime('%d %b %Y, %I:%M %p') if parsed_time else 'as requested'
+            notes = f"Customer requested callback for {time_str}. (Action: Schedule callback)"
+            status_val = "scheduled"
 
             new_f = Followup(
                 tenant_id=call.tenant_id,
@@ -94,7 +91,7 @@ async def sync_qualifying_calls_to_followups(db: AsyncSession):
                 call_id=call.id,
                 phone_number=call_phone,
                 scheduled_at=sched,
-                status="pending",
+                status=status_val,
                 notes=notes,
                 created_at=call.created_at or now,
             )
@@ -135,6 +132,82 @@ async def list_followups(
     res = await db.execute(stmt)
     items = res.scalars().all()
     return [map_followup_to_response(f) for f in items]
+
+
+@router.post("/dispatch")
+async def dispatch_followups(db: AsyncSession = Depends(get_db)):
+    """
+    Manually or automatically starts all follow-up calls that are due according to their scheduled time.
+    """
+    # Sync qualifying calls first
+    await sync_qualifying_calls_to_followups(db)
+    
+    from app.services.followup_dispatcher import dispatch_due_followups
+    placed = await dispatch_due_followups()
+    return {
+        "status": "success",
+        "placed_count": placed,
+        "message": f"{placed} follow-up call(s) initiated according to their scheduled time." if placed > 0 else "No follow-up calls are currently due for dialing.",
+    }
+
+
+@router.post("/{followup_id}/call")
+async def call_followup_now(followup_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Immediately starts an outbound follow-up call to the contact.
+    """
+    stmt = select(Followup).where(Followup.id == followup_id)
+    f = (await db.execute(stmt)).scalar_one_or_none()
+    if not f:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    if not f.phone_number:
+        raise HTTPException(status_code=400, detail="Follow-up has no phone number")
+
+    # Resolve agent
+    agent_id = f.agent_id
+    if not agent_id and f.call_id:
+        c_orig = (await db.execute(select(Call).where(Call.id == f.call_id))).scalar_one_or_none()
+        if c_orig:
+            agent_id = c_orig.agent_id
+    if not agent_id:
+        ag = (await db.execute(select(Agent).where(Agent.enabled == True).limit(1))).scalar_one_or_none()
+        if ag:
+            agent_id = ag.id
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="No active agent available to place follow-up call")
+
+    from app.services.call_service import CallService
+    from app.schemas.call import InitiateCallRequest
+    try:
+        new_call = await CallService.initiate_call(
+            db,
+            InitiateCallRequest(
+                phone_number=f.phone_number,
+                agent_id=agent_id,
+                tenant_id=f.tenant_id,
+                contact_id=f.contact_id,
+                initial_context={
+                    "auto_callback": True,
+                    "followup_id": f.id,
+                    "reason": "Direct follow-up call initiated by operator",
+                },
+            ),
+        )
+        f.status = "completed"
+        f.notes = (f.notes or "") + f" | Follow-up call placed (call {new_call.id})"
+        f.updated_at = datetime.now(UTC)
+        await db.commit()
+        await db.refresh(f)
+        return {
+            "status": "success",
+            "call_id": new_call.id,
+            "phone_number": f.phone_number,
+            "message": f"Follow-up call placed to {f.phone_number}!",
+            "followup": map_followup_to_response(f),
+        }
+    except Exception as e:
+        logger.error(f"Error placing follow-up call {f.id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to place follow-up call: {str(e)}")
 
 
 @router.get("/{followup_id}", response_model=FollowupResponse)

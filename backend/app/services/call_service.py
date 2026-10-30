@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.database import AsyncSessionLocal
 from app.config import settings
 from app.models.agent import Agent
 from app.models.tenant import Tenant
@@ -34,6 +35,7 @@ class CallServiceException(Exception):
 
 
 # Canonical status set
+STATUS_QUEUED = "queued"
 STATUS_INITIATING = "initiating"
 STATUS_RINGING = "ringing"
 STATUS_IN_PROGRESS = "in_progress"
@@ -42,7 +44,7 @@ STATUS_BUSY = "busy"
 STATUS_NO_ANSWER = "no_answer"
 STATUS_FAILED = "failed"
 
-TERMINAL_STATES = {STATUS_COMPLETED, STATUS_BUSY, STATUS_NO_ANSWER, STATUS_FAILED}
+TERMINAL_STATES = {STATUS_COMPLETED, STATUS_BUSY, STATUS_NO_ANSWER, STATUS_FAILED, "hangup", "cancelled"}
 
 
 def validate_and_normalize_phone(phone_number: str) -> str:
@@ -306,6 +308,7 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
             file_size = len(audio_data) if audio_data else None
             effective_duration = float(call.duration or 0.0)
 
+            recording = (await session.execute(select(Recording).where(Recording.call_id == call.id))).scalar_one_or_none()
             if not recording:
                 recording = Recording(
                     tenant_id=call.tenant_id,
@@ -336,6 +339,7 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
                 logger.warning(f"Error persisting fallback call audio: {e}")
 
             file_size = len(audio_data)
+            recording = (await session.execute(select(Recording).where(Recording.call_id == call.id))).scalar_one_or_none()
             if not recording:
                 recording = Recording(
                     tenant_id=call.tenant_id,
@@ -416,7 +420,10 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
             is_no_answer = call.status in ("no_answer", "unanswered") or (call.termination_reason or "").lower() in ("no_answer", "unanswered")
             is_failed = call.status in ("failed", "cancelled") or (call.termination_reason or "").lower() in ("failed", "cancelled")
 
-            if call_phone and (is_busy or is_no_answer or is_failed):
+            # Never schedule retries for system/account failures like insufficient balance
+            is_balance_error = "insufficient" in (call.termination_reason or "").lower() or (call.disposition or "").lower() == "insufficient_balance"
+
+            if call_phone and not is_balance_error and (is_busy or is_no_answer or is_failed):
                 if is_busy:
                     scheduled_time = datetime.now(UTC) + timedelta(minutes=30)
                     status_notes = "Category 2: PHONE / LINE BUSY. Status: busy. Action: Retry call after 30 minutes"
@@ -442,20 +449,27 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
                 else:
                     followup.notes = status_notes
                     followup.scheduled_at = scheduled_time
-            elif f_info.get("requires_followup") and call_phone:
+            elif (f_info.get("requires_followup") or (call.disposition or "").lower() == "callback_requested") and call_phone:
+                from app.services.callback_time import schedule_from_transcript
                 cat_id = f_info.get("category_id")
-                cat_name = f_info.get("name")
-                action = f_info.get("action")
-                matched = f_info.get("matched_utterance")
-                f_notes = f"Category {cat_id}: {cat_name}. Action: {action}. (Matched: '{matched or 'N/A'}')"
+                cat_name = f_info.get("name") or "CLIENT REQUESTS CALL BACK LATER"
+                action = f_info.get("action") or "Schedule callback"
+                matched = f_info.get("matched_utterance") or "Callback requested during conversation"
 
+                parsed_time = schedule_from_transcript(transcript_text) if transcript_text else None
                 sched_iso = f_info.get("suggested_scheduled_at")
-                scheduled_time = None
-                if sched_iso:
+                scheduled_time = parsed_time
+
+                if not scheduled_time and sched_iso:
                     try:
                         scheduled_time = datetime.fromisoformat(sched_iso.replace("Z", "+00:00"))
                     except Exception:
-                        scheduled_time = datetime.now(UTC) + timedelta(hours=2)
+                        pass
+                if not scheduled_time:
+                    scheduled_time = datetime.now(UTC) + timedelta(hours=2)
+
+                time_note = f" for {scheduled_time.strftime('%d %b %Y, %I:%M %p')}" if parsed_time else ""
+                f_notes = f"{cat_name}: {action}{time_note}. (Matched: '{matched or 'N/A'}')"
 
                 if not followup:
                     followup = Followup(
@@ -465,13 +479,14 @@ async def persist_post_call_artifacts(session: AsyncSession, call: Call, payload
                         call_id=call.id,
                         phone_number=call_phone,
                         scheduled_at=scheduled_time,
-                        status="pending",
+                        status="scheduled",
                         notes=f_notes,
                     )
                     session.add(followup)
                 else:
                     followup.notes = f_notes
                     followup.scheduled_at = scheduled_time or followup.scheduled_at
+                    followup.status = "scheduled" 
         except Exception as e:
             logger.debug(f"Lead intelligence & followup auto-analysis notice: {e}")
 
@@ -825,6 +840,97 @@ class CallService:
                 status_code=500,
                 error_code="CALL_INITIATION_FAILED",
             ) from exc
+
+    @staticmethod
+    async def dispatch_existing_call(call_id: str) -> Optional[Call]:
+        """
+        Executes outbound dialing for a previously queued Call record.
+        Runs under strict concurrency control via BatchDialerService.
+        """
+        async with AsyncSessionLocal() as session:
+            stmt = select(Call).where(Call.id == call_id)
+            res = await session.execute(stmt)
+            call = res.scalar_one_or_none()
+            if not call:
+                logger.error(f"[CallService] Call {call_id} not found for dispatch")
+                return None
+
+            if call.status in TERMINAL_STATES:
+                logger.info(f"[CallService] Call {call_id} is already in terminal state '{call.status}', skipping")
+                return call
+
+            agent_stmt = select(Agent).where(Agent.id == call.agent_id)
+            agent_res = await session.execute(agent_stmt)
+            agent = agent_res.scalar_one_or_none()
+            if not agent or not agent.enabled:
+                call.status = STATUS_FAILED
+                call.ended_at = datetime.now(UTC)
+                await persist_call_event(session, call.id, "call.failed", {"error": "Agent not found or disabled"})
+                await session.commit()
+                return call
+
+            context = call.context_data or {}
+            target_provider = str(context.get("provider") or getattr(agent, "telephony_provider", None) or "vobiz").lower()
+            voice_engine = getattr(settings, "VOICE_ENGINE", "sarvam").lower()
+
+            caller_id = getattr(agent, "telephony_from_number", None) or settings.VOBIZ_FROM_NUMBER or "+918065354620"
+            custom_tel_auth_id = (getattr(agent, "telephony_auth_id", None) or "").strip() or None
+            custom_tel_auth_token = (getattr(agent, "telephony_auth_token", None) or "").strip() or None
+
+            call.started_at = datetime.now(UTC)
+            call.status = STATUS_INITIATING
+            await session.commit()
+
+            if voice_engine == "sarvam" and target_provider == "vobiz":
+                try:
+                    from app.services.sarvam_telephony_service import sarvam_telephony_service
+                    vobiz_resp = await sarvam_telephony_service.initiate_vobiz_call(
+                        call_id=call.id,
+                        to_number=call.phone_number,
+                        from_number=caller_id,
+                        auth_id=custom_tel_auth_id,
+                        auth_token=custom_tel_auth_token,
+                    )
+                    call_uuid = vobiz_resp.get("call_uuid", "")
+                    call.telephony_call_id = call_uuid
+                    await persist_call_event(session, call.id, "call.initiated", {"vobiz_call_uuid": call_uuid, "engine": "sarvam"})
+                    await session.commit()
+                    return call
+                except Exception as sarvam_err:
+                    err_str = str(sarvam_err)
+                    logger.error(f"[CallService] VoBiz dispatch failed for call {call_id}: {err_str}")
+                    call.status = STATUS_FAILED
+                    call.ended_at = datetime.now(UTC)
+                    if "Insufficient balance" in err_str or "402" in err_str:
+                        call.termination_reason = "Insufficient VoBiz balance"
+                        call.disposition = "insufficient_balance"
+                    else:
+                        call.termination_reason = err_str[:64]
+                        call.disposition = "carrier_error"
+                    await persist_call_event(session, call.id, "call.failed", {"error": err_str})
+                    await session.commit()
+                    return call
+
+            # Fallback to Dograh
+            try:
+                dograh_resp = await dograh_service.initiate_call(
+                    phone_number=call.phone_number,
+                    trigger_path=agent.dograh_trigger_path,
+                    workflow_id=agent.dograh_workflow_id,
+                    initial_context=context,
+                )
+                run_id = dograh_resp.get("run_id") or dograh_resp.get("id")
+                call.dograh_run_id = run_id
+                await persist_call_event(session, call.id, "call.initiated", {"dograh_run_id": run_id, "engine": "dograh"})
+                await session.commit()
+                return call
+            except Exception as dograh_err:
+                logger.error(f"[CallService] Dograh dispatch failed for call {call_id}: {dograh_err}")
+                call.status = STATUS_FAILED
+                call.ended_at = datetime.now(UTC)
+                await persist_call_event(session, call.id, "call.failed", {"error": str(dograh_err)})
+                await session.commit()
+                return call
 
     @staticmethod
     async def get_call_status(session: AsyncSession, call_id: str) -> Optional[Call]:
